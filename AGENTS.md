@@ -14,7 +14,7 @@ There is no build step, bundler, test suite, lint, typecheck, or CI. Do not inve
 - `electron/` — main process: `main.js` (windows, menu, IPC handlers), `server-manager.js` (child-process spawn/lifecycle), `preload.js` (IPC bridge)
 - `renderer/app/` — placeholder main window (launcher button)
 - `renderer/launcher/` — modal dialog: project path, command, args, host/port, start/stop/restart
-- `web/` — sample Node HTTP server used as a launch target. Not imported by the Electron code; it is an external project the user selects at runtime
+- `web/` — **LAN host/device monitoring server** (the primary app). Node HTTP + WebSocket (`ws`) + SQLite (`node:sqlite`). Serves a single-page dashboard from `public/`. Ping/ARP/hostname probes in `lib/`. Started via `npm run dev` in `web/`, injected with `HOST`/`PORT` by the Electron launcher. Not imported by the Electron code; it is an external project the user selects at runtime.
 
 ## Architecture (non-obvious)
 

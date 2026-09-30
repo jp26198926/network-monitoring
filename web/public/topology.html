@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LAN Monitor — Topology</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="topology.css">
+</head>
+<body class="topology-page">
+
+  <header>
+    <div class="brand">
+      <h1>LAN Monitor</h1>
+      <div class="subnet-label">Network Topology</div>
+    </div>
+
+    <nav class="main-nav">
+      <a href="/">Dashboard</a>
+      <a href="/topology" class="active">Topology</a>
+    </nav>
+
+    <div class="header-actions">
+      <div id="wsStatus" class="ws-status offline">Connecting…</div>
+    </div>
+  </header>
+
+  <!-- Toolbar -->
+  <div class="topo-toolbar">
+    <div class="topo-toolbar-left">
+      <select id="diagramSelect" class="select"></select>
+      <button id="newDiagramBtn" class="btn btn-secondary" title="New diagram">+ New</button>
+      <button id="renameDiagramBtn" class="btn btn-secondary" title="Rename">Rename</button>
+      <button id="deleteDiagramBtn" class="btn btn-danger" title="Delete">Delete</button>
+    </div>
+
+    <div class="topo-toolbar-center">
+      <button id="selectModeBtn" class="tool-btn active" title="Select / move (V)">Select</button>
+      <button id="connectModeBtn" class="tool-btn" title="Connect nodes (C)">Connect</button>
+      <span class="tool-sep"></span>
+      <button id="addNodeBtn" class="tool-btn" title="Add custom node">+ Node</button>
+      <button id="addDeviceBtn" class="tool-btn" title="Add from scan">+ Device</button>
+      <span class="tool-sep"></span>
+      <button id="zoomInBtn" class="tool-btn" title="Zoom in (+)">+</button>
+      <button id="zoomOutBtn" class="tool-btn" title="Zoom out (-)">−</button>
+      <button id="zoomResetBtn" class="tool-btn" title="Reset zoom (Ctrl+0)">1:1</button>
+    </div>
+
+    <div class="topo-toolbar-right">
+      <span id="dirtyFlag" class="dirty-flag hidden">● Unsaved</span>
+      <button id="saveBtn" class="btn" title="Save (Ctrl+S)">Save</button>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div class="topo-main">
+
+    <!-- Canvas -->
+    <div id="viewport" class="topo-viewport">
+      <div id="world" class="topo-world">
+        <svg id="linksSvg" class="topo-links-svg" width="6000" height="6000" overflow="visible"></svg>
+        <!-- nodes injected here -->
+      </div>
+      <div id="canvasHint" class="canvas-hint">
+        Click <strong>+ Node</strong> or <strong>+ Device</strong> to add a node.<br>
+        Drag to move · Scroll to zoom · <strong>Connect</strong> mode to link nodes.
+      </div>
+    </div>
+
+    <!-- Properties panel -->
+    <aside id="propsPanel" class="topo-props hidden">
+      <div class="props-header">
+        <h2 id="propsTitle">Properties</h2>
+        <button id="closeProps" class="btn-icon">&times;</button>
+      </div>
+      <div class="props-body">
+        <!-- Node properties -->
+        <div id="nodeProps" class="hidden">
+          <label>Type</label>
+          <select id="propType" class="select">
+            <option value="router">Router</option>
+            <option value="switch">Switch</option>
+            <option value="pc">PC</option>
+            <option value="server">Server</option>
+            <option value="printer">Printer</option>
+            <option value="phone">Phone</option>
+            <option value="firewall">Firewall</option>
+            <option value="cloud">Cloud</option>
+            <option value="generic">Generic</option>
+          </select>
+
+          <label>IP Address</label>
+          <input id="propIp" type="text" placeholder="192.168.1.1">
+
+          <label>Hostname</label>
+          <input id="propHostname" type="text" placeholder="R1">
+
+          <label>MAC Address</label>
+          <input id="propMac" type="text" placeholder="aa:bb:cc:dd:ee:ff">
+
+          <label>Notes</label>
+          <textarea id="propNotes" rows="3" placeholder="Optional notes…"></textarea>
+
+          <label>Bind to device</label>
+          <select id="propDevice" class="select">
+            <option value="">None</option>
+          </select>
+
+          <div id="propLiveInfo" class="live-info hidden">
+            <div class="live-row"><span class="label">Status</span><span id="propLiveStatus"></span></div>
+            <div class="live-row"><span class="label">Latency</span><span id="propLiveRtt"></span></div>
+          </div>
+
+          <button id="deleteNodeBtn" class="btn btn-danger btn-block">Delete Node</button>
+        </div>
+
+        <!-- Link properties -->
+        <div id="linkProps" class="hidden">
+          <label>Label</label>
+          <input id="propLinkLabel" type="text" placeholder="gig0/1">
+
+          <button id="deleteLinkBtn" class="btn btn-danger btn-block">Delete Link</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Add-device drawer -->
+    <aside id="deviceDrawer" class="topo-drawer hidden">
+      <div class="drawer-header">
+        <h2>Add Device</h2>
+        <button id="closeDeviceDrawer" class="btn-icon">&times;</button>
+      </div>
+      <div class="drawer-search">
+        <input id="deviceSearch" type="search" placeholder="Search IP / hostname…">
+      </div>
+      <div id="deviceList" class="drawer-list"></div>
+    </aside>
+  </div>
+
+  <script src="topology.js"></script>
+</body>
+</html>

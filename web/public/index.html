@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LAN Monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>LAN Monitor</h1>
+      <div id="subnetLabel" class="subnet-label">—</div>
+    </div>
+
+    <nav class="main-nav">
+      <a href="/" class="active">Dashboard</a>
+      <a href="/topology">Topology</a>
+    </nav>
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="tile-value" id="tileTotal">—</div>
+        <div class="tile-label">Devices</div>
+      </div>
+      <div class="tile up">
+        <div class="tile-value" id="tileUp">—</div>
+        <div class="tile-label">Online</div>
+      </div>
+      <div class="tile down">
+        <div class="tile-value" id="tileDown">—</div>
+        <div class="tile-label">Offline</div>
+      </div>
+      <div class="tile">
+        <div class="tile-value" id="tileAvg">—</div>
+        <div class="tile-label">Avg Latency</div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <div id="wsStatus" class="ws-status offline">Connecting…</div>
+      <button id="refreshBtn" class="btn" title="Force full sweep">Scan now</button>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <div class="tabs">
+      <button class="tab active" data-status="all">All</button>
+      <button class="tab up" data-status="up">Online</button>
+      <button class="tab down" data-status="down">Offline</button>
+    </div>
+    <input id="searchBox" class="search" type="search" placeholder="Search IP / hostname / MAC…">
+  </section>
+
+  <section class="device-table-wrap">
+    <table class="device-table">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>IP</th>
+          <th>Hostname</th>
+          <th>MAC</th>
+          <th>Latency</th>
+          <th>24h</th>
+          <th>Last Seen</th>
+        </tr>
+      </thead>
+      <tbody id="deviceRows"></tbody>
+    </table>
+    <div id="emptyState" class="empty-state hidden">No devices match.</div>
+  </section>
+
+  <aside id="detailDrawer" class="drawer hidden">
+    <div class="drawer-header">
+      <h2 id="detailTitle">Device</h2>
+      <button id="closeDrawer" class="btn-icon">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <div class="detail-grid">
+        <div><span class="label">Status</span><span id="detailStatus"></span></div>
+        <div><span class="label">IP</span><span id="detailIp"></span></div>
+        <div><span class="label">Hostname</span><span id="detailHostname"></span></div>
+        <div><span class="label">MAC</span><span id="detailMac"></span></div>
+        <div><span class="label">First Seen</span><span id="detailFirstSeen"></span></div>
+        <div><span class="label">Last Seen</span><span id="detailLastSeen"></span></div>
+      </div>
+
+      <h3>Latency (24h)</h3>
+      <div id="detailChart" class="detail-chart"></div>
+
+      <h3>Events</h3>
+      <ul id="detailEvents" class="event-list"></ul>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

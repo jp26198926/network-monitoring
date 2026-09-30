@@ -1,49 +1,93 @@
 const http = require("http");
 
-const PORT = Number(process.env.PORT) || 3000;
+const config = require("./config");
+const db = require("./lib/db");
+const monitor = require("./lib/monitor");
+const { createHandler } = require("./lib/api");
+const wsHub = require("./lib/ws-hub");
 
 const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.PORT) || 3000;
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, {
-    "Content-Type": "text/html",
-  });
+/*
+|--------------------------------------------------------------------------
+| Open Database
+|--------------------------------------------------------------------------
+*/
 
-  res.end(`
-                <!DOCTYPE html>
+try {
+  db.open();
+  db.prune();
+  console.log(`[db] ready at ${db.DB_FILE}`);
+} catch (error) {
+  console.error("[db] failed to open:", error);
+  process.exit(1);
+}
 
-                <html>
+/*
+|--------------------------------------------------------------------------
+| HTTP Server
+|--------------------------------------------------------------------------
+*/
 
-                <head>
+const server = http.createServer(createHandler());
 
-                    <title>
-                        My Web App
-                    </title>
+/*
+|--------------------------------------------------------------------------
+| WebSocket Hub
+|--------------------------------------------------------------------------
+*/
 
-                </head>
+wsHub.attach(server);
 
-                <body>
+/*
+|--------------------------------------------------------------------------
+| Start Monitoring Engine
+|--------------------------------------------------------------------------
+*/
 
-                    <h1>
-                        Hello from Web App
-                    </h1>
+monitor.start();
 
-                    <p>
-                        Host:
-                        ${HOST}
-                    </p>
-
-                    <p>
-                        Port:
-                        ${PORT}
-                    </p>
-
-                </body>
-
-                </html>
-            `);
-});
+/*
+|--------------------------------------------------------------------------
+| Listen
+|--------------------------------------------------------------------------
+*/
 
 server.listen(PORT, HOST, () => {
-  console.log(`Server running at http://${HOST}:${PORT}`);
+  console.log("");
+  console.log("==============================");
+  console.log(" LAN Monitor");
+  console.log("==============================");
+  console.log(` Listening:  http://${HOST}:${PORT}`);
+  console.log(` Database:   ${db.DB_FILE}`);
+  console.log(` Subnet:     ${monitor.subnetInfo?.cidr || "unknown"}`);
+  console.log(` Targets:    ${monitor.targets.length}`);
+  console.log("==============================");
+  console.log("");
 });
+
+/*
+|--------------------------------------------------------------------------
+| Graceful Shutdown
+|--------------------------------------------------------------------------
+*/
+
+function shutdown() {
+  console.log("\n[server] shutting down...");
+
+  monitor.stop();
+  wsHub.close();
+
+  server.close(() => {
+    db.close();
+    process.exit(0);
+  });
+
+  // force-exit fallback
+  setTimeout(() => process.exit(0), 2000).unref();
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("SIGHUP", shutdown);

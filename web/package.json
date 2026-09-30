@@ -1,7 +1,12 @@
 {
-  "name": "web-app",
+  "name": "lan-monitor",
   "version": "1.0.0",
+  "description": "LAN host/device monitoring server and dashboard",
+  "main": "server.js",
   "scripts": {
     "dev": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   }
 }
