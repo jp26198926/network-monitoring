@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Server Launcher
+    </title>
+
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+
+        body {
+
+            margin: 0;
+
+            padding: 25px;
+
+            font-family:
+                Arial,
+                sans-serif;
+
+            background: #f5f5f5;
+
+        }
+
+
+        h1 {
+
+            margin-top: 0;
+
+            margin-bottom: 25px;
+
+        }
+
+
+        .form-group {
+
+            margin-bottom: 18px;
+
+        }
+
+
+        label {
+
+            display: block;
+
+            margin-bottom: 6px;
+
+            font-weight: bold;
+
+        }
+
+
+        input {
+
+            width: 100%;
+
+            padding: 10px;
+
+            border: 1px solid #ccc;
+
+            border-radius: 5px;
+
+            font-size: 14px;
+
+        }
+
+
+        .path-row {
+
+            display: flex;
+
+            gap: 8px;
+
+        }
+
+
+        .path-row input {
+
+            flex: 1;
+
+        }
+
+
+        button {
+
+            padding: 10px 15px;
+
+            border: none;
+
+            border-radius: 5px;
+
+            cursor: pointer;
+
+            font-size: 14px;
+
+        }
+
+
+        button:disabled {
+
+            opacity: 0.5;
+
+            cursor: not-allowed;
+
+        }
+
+
+        #browseButton {
+
+            background: #6c757d;
+
+            color: white;
+
+        }
+
+
+        #startButton {
+
+            background: #198754;
+
+            color: white;
+
+        }
+
+
+        #stopButton {
+
+            background: #dc3545;
+
+            color: white;
+
+        }
+
+
+        #restartButton {
+
+            background: #fd7e14;
+
+            color: white;
+
+        }
+
+
+        #saveButton {
+
+            background: #0d6efd;
+
+            color: white;
+
+        }
+
+
+        .buttons {
+
+            display: flex;
+
+            gap: 8px;
+
+            flex-wrap: wrap;
+
+            margin-top: 25px;
+
+        }
+
+
+        .status {
+
+            margin-top: 25px;
+
+            padding: 15px;
+
+            background: white;
+
+            border-radius: 6px;
+
+            border: 1px solid #ddd;
+
+        }
+
+
+        .status-title {
+
+            margin-top: 0;
+
+        }
+
+
+        .running {
+
+            color: #198754;
+
+            font-weight: bold;
+
+        }
+
+
+        .stopped {
+
+            color: #dc3545;
+
+            font-weight: bold;
+
+        }
+
+
+        .url {
+
+            word-break: break-all;
+
+        }
+
+
+        .message {
+
+            margin-top: 15px;
+
+            min-height: 20px;
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+    <h1>
+        Server Launcher
+    </h1>
+
+
+    <form id="serverForm">
+
+
+        <!-- Project -->
+
+        <div class="form-group">
+
+            <label for="projectPath">
+
+                Project Path
+
+            </label>
+
+
+            <div class="path-row">
+
+                <input
+                    id="projectPath"
+                    type="text"
+                    placeholder="Select project folder"
+                    required
+                >
+
+
+                <button
+                    id="browseButton"
+                    type="button"
+                >
+
+                    Browse
+
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- Command -->
+
+        <div class="form-group">
+
+            <label for="command">
+
+                Command
+
+            </label>
+
+
+            <input
+                id="command"
+                type="text"
+                value="npm"
+                required
+            >
+
+        </div>
+
+
+        <!-- Arguments -->
+
+        <div class="form-group">
+
+            <label for="arguments">
+
+                Arguments
+
+            </label>
+
+
+            <input
+                id="arguments"
+                type="text"
+                value="run dev"
+            >
+
+        </div>
+
+
+        <!-- Host -->
+
+        <div class="form-group">
+
+            <label for="host">
+
+                Host
+
+            </label>
+
+
+            <input
+                id="host"
+                type="text"
+                value="0.0.0.0"
+            >
+
+        </div>
+
+
+        <!-- Port -->
+
+        <div class="form-group">
+
+            <label for="port">
+
+                Port
+
+            </label>
+
+
+            <input
+                id="port"
+                type="number"
+                value="3000"
+                min="1"
+                max="65535"
+                required
+            >
+
+        </div>
+
+
+        <!-- Buttons -->
+
+        <div class="buttons">
+
+            <button
+                id="startButton"
+                type="submit"
+            >
+
+                Start
+
+            </button>
+
+
+            <button
+                id="stopButton"
+                type="button"
+            >
+
+                Stop
+
+            </button>
+
+
+            <button
+                id="restartButton"
+                type="button"
+            >
+
+                Restart
+
+            </button>
+
+
+            <button
+                id="saveButton"
+                type="button"
+            >
+
+                Save
+
+            </button>
+
+        </div>
+
+    </form>
+
+
+    <!-- Status -->
+
+    <div class="status">
+
+        <h3 class="status-title">
+
+            Status
+
+        </h3>
+
+
+        <div id="status">
+
+            ● Stopped
+
+        </div>
+
+
+        <br>
+
+
+        <div>
+
+            <strong>
+                Local URL:
+            </strong>
+
+
+            <div
+                id="localUrl"
+                class="url"
+            >
+
+                -
+
+            </div>
+
+        </div>
+
+
+        <br>
+
+
+        <div>
+
+            <strong>
+                Network URL:
+            </strong>
+
+
+            <div
+                id="networkUrl"
+                class="url"
+            >
+
+                -
+
+            </div>
+
+        </div>
+
+
+        <div
+            id="message"
+            class="message"
+        ></div>
+
+    </div>
+
+
+    <script src="./renderer.js"></script>
+
+</body>
+
+</html>

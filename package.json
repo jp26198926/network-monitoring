@@ -1,0 +1,12 @@
+{
+  "name": "electron-local-server",
+  "version": "1.0.0",
+  "description": "Electron application launcher for local web applications",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.5.0"
+  }
+}
