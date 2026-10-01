@@ -748,7 +748,12 @@ async function saveDiagram() {
 
 async function deleteDiagram() {
   if (!state.current) return;
-  if (!confirm(`Delete "${state.current.name}"?`)) return;
+  const ok = await Modal.confirm(`Delete "${state.current.name}"?`, {
+    title: "Delete diagram",
+    okLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
 
   try {
     await fetch(`/api/topologies/${state.current.id}`, { method: "DELETE" });
@@ -769,7 +774,9 @@ async function deleteDiagram() {
 
 async function renameDiagram() {
   if (!state.current) return;
-  const name = prompt("Diagram name:", state.current.name);
+  const name = await Modal.prompt("Diagram name:", state.current.name, {
+    title: "Rename diagram",
+  });
   if (!name) return;
 
   state.current.name = name;
@@ -1035,8 +1042,22 @@ function bindEvents() {
   // toolbar
   dom.selectModeBtn.addEventListener("click", () => setMode("select"));
   dom.connectModeBtn.addEventListener("click", () => setMode("connect"));
-  dom.addNodeBtn.addEventListener("click", () => {
-    const type = prompt("Type (router/switch/pc/server/printer/phone/firewall/cloud/generic):", "generic");
+  dom.addNodeBtn.addEventListener("click", async () => {
+    const type = await Modal.prompt("Node type:", "generic", {
+      title: "Add node",
+      input: "select",
+      options: [
+        "router",
+        "switch",
+        "pc",
+        "server",
+        "printer",
+        "phone",
+        "firewall",
+        "cloud",
+        "generic",
+      ],
+    });
     if (type) addNode(type.trim().toLowerCase() || "generic");
   });
   dom.addDeviceBtn.addEventListener("click", openDeviceDrawer);
@@ -1052,8 +1073,10 @@ function bindEvents() {
   dom.diagramSelect.addEventListener("change", () => {
     if (dom.diagramSelect.value) openDiagram(dom.diagramSelect.value);
   });
-  dom.newDiagramBtn.addEventListener("click", () => {
-    const name = prompt("Diagram name:", "New Diagram");
+  dom.newDiagramBtn.addEventListener("click", async () => {
+    const name = await Modal.prompt("Diagram name:", "New Diagram", {
+      title: "New diagram",
+    });
     if (name) createDiagram(name);
   });
   dom.renameDiagramBtn.addEventListener("click", renameDiagram);
