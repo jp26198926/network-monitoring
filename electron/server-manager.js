@@ -1,6 +1,7 @@
 const { spawn, spawnSync } = require("child_process");
 const net = require("net");
 const fs = require("fs");
+const path = require("path");
 
 let serverProcess = null;
 let currentServerConfig = null;
@@ -105,48 +106,79 @@ function startServer(config) {
         ...config,
       };
 
+      const env = {
+        ...process.env,
+
+        /**
+         * These values are available to
+         * the child web application through:
+         *
+         * process.env.HOST
+         * process.env.PORT
+         */
+        HOST: config.host || "0.0.0.0",
+        PORT: String(config.port),
+      };
+
       console.log("");
       console.log("==============================");
       console.log("Starting Application");
       console.log("==============================");
       console.log(`Project: ${config.projectPath}`);
-      console.log(`Command: ${command}`);
-      console.log("Arguments:", args);
+      console.log(`Command: ${config.bundled ? "bundled (electron-node)" : command}`);
+      console.log("Arguments:", config.bundled ? [path.join(config.projectPath, "server.js")] : args);
       console.log(`Host: ${config.host}`);
       console.log(`Port: ${config.port}`);
       console.log("==============================");
       console.log("");
 
-      /**
-       * Start the child process.
-       *
-       * We intentionally do NOT use:
-       *
-       * shell: true
-       *
-       * This avoids the Node DEP0190 warning.
-       */
-      serverProcess = spawnCommand(command, args, {
-        cwd: config.projectPath,
+      if (config.bundled) {
+        /*
+         *--------------------------------------------------------------------
+         * Bundled mode: run server.js on Electron's own Node.
+         *--------------------------------------------------------------------
+         *
+         * Do NOT disable the RunAsNode fuse (@electron/fuses)
+         * — ELECTRON_RUN_AS_NODE would be ignored and this
+         * spawn would fail.
+         */
+        env.ELECTRON_RUN_AS_NODE = "1";
 
-        stdio: "inherit",
+        if (config.dataDir) {
+          env.LAN_MONITOR_DATA_DIR = config.dataDir;
+        }
 
-        env: {
-          ...process.env,
+        const entry = path.join(config.projectPath, "server.js");
 
-          /**
-           * These values are available to
-           * the child web application through:
-           *
-           * process.env.HOST
-           * process.env.PORT
-           */
-          HOST: config.host || "0.0.0.0",
-          PORT: String(config.port),
-        },
+        serverProcess = spawn(process.execPath, [entry], {
+          cwd: config.projectPath,
 
-        windowsHide: false,
-      });
+          stdio: "ignore",
+
+          env,
+
+          windowsHide: true,
+        });
+      } else {
+        /**
+         * Start the child process.
+         *
+         * We intentionally do NOT use:
+         *
+         * shell: true
+         *
+         * This avoids the Node DEP0190 warning.
+         */
+        serverProcess = spawnCommand(command, args, {
+          cwd: config.projectPath,
+
+          stdio: "inherit",
+
+          env,
+
+          windowsHide: false,
+        });
+      }
 
       let resolved = false;
 
@@ -343,4 +375,5 @@ module.exports = {
   stopServer,
   waitForServer,
   getServerStatus,
+  checkServerPort,
 };

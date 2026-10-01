@@ -1,12 +1,76 @@
 {
   "name": "electron-local-server",
+  "productName": "LAN Monitor",
   "version": "1.0.0",
   "description": "Electron application launcher for local web applications",
+  "author": "LAN Monitor",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "deps:web": "npm --prefix web install --omit=dev",
+    "build": "npm run deps:web && electron-builder --win nsis",
+    "build:dir": "npm run deps:web && electron-builder --win dir",
+    "build:mac": "npm run deps:web && electron-builder --mac",
+    "build:linux": "npm run deps:web && electron-builder --linux"
   },
   "devDependencies": {
-    "electron": "^44.5.0"
+    "electron": "^44.5.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.local.electron-local-server",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "web",
+        "to": "web",
+        "filter": [
+          "**/*",
+          "!data/**",
+          "!data",
+          "!node_modules/**",
+          "!node_modules"
+        ]
+      },
+      {
+        "from": "web/node_modules",
+        "to": "web/node_modules"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities",
+      "identity": null
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Network",
+      "maintainer": "LAN Monitor"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "${productName}-${version}-setup.${ext}"
+    }
   }
 }

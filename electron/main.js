@@ -9,6 +9,7 @@ const {
   stopServer,
   waitForServer,
   getServerStatus,
+  checkServerPort,
 } = require("./server-manager");
 
 let mainWindow = null;
@@ -21,6 +22,113 @@ let launcherWindow = null;
 */
 
 const configFile = path.join(app.getPath("userData"), "server-config.json");
+
+/*
+|--------------------------------------------------------------------------
+| Bundled Web Application
+|--------------------------------------------------------------------------
+|
+| When packaged, the LAN Monitor server ships under resources/web and
+| is started with Electron's own Node (ELECTRON_RUN_AS_NODE). The target
+| machine does not need Node.js or npm installed.
+|
+*/
+
+function getBundledWebRoot() {
+  const root = app.isPackaged
+    ? path.join(process.resourcesPath, "web")
+    : path.join(app.getAppPath(), "web");
+
+  return fs.existsSync(path.join(root, "server.js")) ? root : null;
+}
+
+function buildBundledConfig() {
+  const webRoot = getBundledWebRoot();
+
+  if (!webRoot) {
+    return null;
+  }
+
+  let savedPort = 3000;
+
+  try {
+    if (fs.existsSync(configFile)) {
+      const saved = JSON.parse(fs.readFileSync(configFile, "utf-8"));
+
+      if (saved?.port) {
+        savedPort = saved.port;
+      }
+    }
+  } catch {
+    /* fall through to default port */
+  }
+
+  return {
+    projectPath: webRoot,
+    command: "bundled",
+    arguments: "",
+    host: "0.0.0.0",
+    port: String(savedPort),
+    bundled: true,
+    dataDir: path.join(app.getPath("userData"), "lan-monitor"),
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| Auto-Start Bundled Server
+|--------------------------------------------------------------------------
+|
+| Packaged builds boot straight into the bundled LAN Monitor.
+| Dev (npm start) is unchanged — open the Launcher manually.
+|
+*/
+
+async function startBundledAndLoad() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  const config = buildBundledConfig();
+
+  if (!config) {
+    return;
+  }
+
+  const port = Number(config.port);
+
+  if (await checkServerPort(port, "127.0.0.1")) {
+    dialog.showErrorBox(
+      "Port in use",
+      `Port ${config.port} is already in use.\n\n` +
+        "Close the other application or change the port in the Server Launcher.",
+    );
+
+    return;
+  }
+
+  const result = await startServer(config);
+
+  if (!result.success) {
+    dialog.showErrorBox("Failed to start LAN Monitor", result.error);
+
+    return;
+  }
+
+  try {
+    await waitForServer(port, "127.0.0.1", 30000);
+  } catch (error) {
+    stopServer();
+
+    dialog.showErrorBox("LAN Monitor did not start", error.message);
+
+    return;
+  }
+
+  if (mainWindow) {
+    await mainWindow.loadURL(`http://localhost:${config.port}`);
+  }
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -656,6 +764,14 @@ app.whenReady().then(() => {
     */
 
   createApplicationMenu();
+
+  /*
+    |--------------------------------------------------------------------------
+    | Auto-Start Bundled LAN Monitor (packaged builds only)
+    |--------------------------------------------------------------------------
+    */
+
+  startBundledAndLoad();
 });
 
 /*

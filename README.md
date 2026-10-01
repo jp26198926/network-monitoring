@@ -32,6 +32,34 @@ cd web && npm run dev
 
 From any other device on your LAN, open `http://<host-ip>:3000` (the LAN URL is shown in the launcher after start).
 
+## Packaging
+
+Build a distributable that ships `web/` (including `ws`) with the app. Packaged builds auto-start the bundled monitor with Electron's own Node — **the target machine does not need Node.js or npm**.
+
+```bash
+# Windows installer (run on Windows)
+npm run build        # → dist/LAN Monitor-1.0.0-setup.exe
+
+# Unpacked smoke test (no installer)
+npm run build:dir    # → dist/win-unpacked/LAN Monitor.exe
+
+# macOS (run on a Mac)
+npm run build:mac    # → dist/LAN Monitor-1.0.0.dmg + .zip
+
+# Linux (run on Linux)
+npm run build:linux  # → dist/LAN Monitor-1.0.0.AppImage + .deb
+```
+
+Build on the target OS (macOS `.dmg` cannot be built from Windows). After changing anything under `web/`, just re-run the build script — it reinstalls web production deps and recopies `web/` into the package.
+
+| | |
+|---|---|
+| **Auto-start** | Packaged app launches the bundled LAN Monitor on start (dashboard at `http://localhost:3000`) |
+| **No Node required** | Server runs via `ELECTRON_RUN_AS_NODE` on Electron's bundled Node 24 |
+| **Custom projects** | Server Launcher still accepts any folder + command (needs Node/npm on that machine) |
+| **Data location** | Packaged: `%APPDATA%\LAN Monitor\lan-monitor\` (Windows), `~/Library/Application Support/LAN Monitor/lan-monitor/` (macOS), `~/.config/LAN Monitor/lan-monitor/` (Linux) |
+| **Ports** | Default `3000` / host `0.0.0.0` — first run may prompt Windows Firewall (allow for LAN access) |
+
 ## Architecture
 
 ```
@@ -133,7 +161,7 @@ Open `/topology` to design network diagrams:
 | `web/data/settings.json`   | Scan configuration (intervals, concurrency, retention) |
 | `web/data/topologies.json` | Saved topology diagrams                                |
 
-All runtime data lives in `web/data/` (gitignored).
+In development, all runtime data lives in `web/data/` (gitignored). Packaged builds write to the app data directory instead (`LAN Monitor/lan-monitor/` under userData — see Packaging above) so updates never wipe history.
 
 ## Configuration
 
@@ -160,7 +188,8 @@ Settings are editable via `PUT /api/settings` or the dashboard:
 ## Tech stack
 
 - **Electron 44** — desktop shell (optional)
-- **Node.js 24** — monitoring server
+- **Node.js 24** — monitoring server (bundled via Electron's Node when packaged)
+- **electron-builder** — Windows NSIS / macOS dmg / Linux AppImage+deb packaging
 - **`ws`** — WebSocket server (only runtime dependency)
 - **`node:sqlite`** — built-in SQLite, no native compilation
 - **Vanilla HTML/CSS/JS** — no framework, no bundler, no CDN

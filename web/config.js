@@ -1,7 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.LAN_MONITOR_DATA_DIR
+  ? path.resolve(process.env.LAN_MONITOR_DATA_DIR)
+  : path.join(__dirname, "data");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 
 const DEFAULTS = {
