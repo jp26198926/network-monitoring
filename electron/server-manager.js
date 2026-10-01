@@ -143,6 +143,7 @@ function startServer(config) {
          * spawn would fail.
          */
         env.ELECTRON_RUN_AS_NODE = "1";
+        env.LAN_MONITOR_PARENT_WATCH = "1";
 
         if (config.dataDir) {
           env.LAN_MONITOR_DATA_DIR = config.dataDir;
@@ -153,7 +154,12 @@ function startServer(config) {
         serverProcess = spawn(process.execPath, [entry], {
           cwd: config.projectPath,
 
-          stdio: "ignore",
+          /**
+           * stdin pipe is kept open by the parent so the
+           * child can exit when Electron dies (see
+           * web/server.js stdin watchdog).
+           */
+          stdio: ["pipe", "ignore", "ignore"],
 
           env,
 
@@ -325,11 +331,28 @@ function stopServer() {
   console.log(`Stopping server process ${pid}...`);
 
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+    const result = spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
       windowsHide: true,
+      encoding: "utf8",
     });
-  } else {
+
+    if (result.status !== 0) {
+      console.error(
+        `taskkill failed for pid ${pid}:`,
+        result.error?.message || result.stderr || `status ${result.status}`,
+      );
+    }
+  }
+
+  /*
+   * Always try kill() as well — covers cases where
+   * taskkill cannot walk the tree (cmd.exe wrapper)
+   * or the PID is the real node process.
+   */
+  try {
     serverProcess.kill("SIGTERM");
+  } catch {
+    /* already dead */
   }
 
   serverProcess = null;

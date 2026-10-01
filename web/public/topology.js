@@ -103,7 +103,17 @@ function typeLabel(type) {
 /* ---------------------------------------------------------------- */
 
 function uuid() {
-  return crypto.randomUUID();
+  // crypto.randomUUID is secure-context only (localhost/HTTPS).
+  // LAN browsers on http://<ip> do not have it.
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 function clamp(v, min, max) {
@@ -635,7 +645,12 @@ function handleConnectClick(nodeId) {
 /* ---------------------------------------------------------------- */
 
 function addNode(type = "generic", data = {}) {
-  if (!state.current) return;
+  if (!state.current) {
+    Modal.alert("Create or open a diagram first, then add nodes.", {
+      title: "No diagram",
+    });
+    return;
+  }
 
   // place at viewport center in world coords
   const rect = dom.viewport.getBoundingClientRect();
@@ -854,46 +869,30 @@ function closeDeviceDrawer() {
 }
 
 /* ---------------------------------------------------------------- */
-/* WebSocket — live status                                           */
+/* Live updates (WebSocket + polling fallback)                       */
 /* ---------------------------------------------------------------- */
 
-let ws = null;
-let wsReconnectDelay = 2000;
-
-function connectWebSocket() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
-
-  ws.onopen = () => {
-    wsReconnectDelay = 2000;
+function setLiveStatus(status) {
+  if (status === "live") {
     dom.wsStatus.textContent = "Live";
     dom.wsStatus.className = "ws-status online";
-    ws.send(JSON.stringify({ type: "hello" }));
-  };
-
-  ws.onclose = () => {
-    dom.wsStatus.textContent = "Reconnecting…";
+  } else if (status === "polling") {
+    dom.wsStatus.textContent = "Live (polling)";
+    dom.wsStatus.className = "ws-status polling";
+  } else {
+    dom.wsStatus.textContent = "Connecting…";
     dom.wsStatus.className = "ws-status offline";
-    setTimeout(connectWebSocket, wsReconnectDelay);
-    wsReconnectDelay = Math.min(15000, wsReconnectDelay * 1.5);
-  };
-
-  ws.onerror = () => ws.close();
-
-  ws.onmessage = (event) => {
-    try {
-      handleWsMessage(JSON.parse(event.data));
-    } catch { /* ignore */ }
-  };
+  }
 }
 
 function handleWsMessage(msg) {
   if (msg.type === "snapshot") {
     for (const d of msg.devices || []) {
-      state.devices.set(d.id, { ...d, rttMs: null });
-      state.liveStatus.set(d.id, { status: d.status, rttMs: null });
+      const prev = state.liveStatus.get(d.id);
+      state.devices.set(d.id, { ...d, rttMs: prev?.rttMs ?? null });
+      state.liveStatus.set(d.id, { status: d.status, rttMs: prev?.rttMs ?? null });
       if (d.ip) {
-        state.ipStatus.set(d.ip, { status: d.status, rttMs: null });
+        state.ipStatus.set(d.ip, { status: d.status, rttMs: prev?.rttMs ?? null });
       }
     }
     refreshNodeStatuses();
@@ -1161,7 +1160,10 @@ async function init() {
   initViewport();
   bindEvents();
   applyTransform();
-  connectWebSocket();
+  Live.connect({
+    onMessage: handleWsMessage,
+    onStatus: setLiveStatus,
+  });
   await loadDevices();
   await loadDiagramList();
 

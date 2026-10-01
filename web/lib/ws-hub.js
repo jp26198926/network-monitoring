@@ -13,6 +13,8 @@ function attach(server) {
   wss.on("connection", (socket) => {
     socket.isAlive = true;
 
+    console.log(`[ws] client connected (${wss.clients.size} total)`);
+
     socket.on("pong", () => {
       socket.isAlive = true;
     });
@@ -28,6 +30,10 @@ function attach(server) {
 
     socket.on("error", () => {
       /* ignore */
+    });
+
+    socket.on("close", () => {
+      console.log(`[ws] client disconnected (${wss.clients.size} total)`);
     });
 
     // greet with a full snapshot

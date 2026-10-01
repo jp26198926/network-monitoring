@@ -14,6 +14,7 @@ const {
 
 let mainWindow = null;
 let launcherWindow = null;
+let shuttingDown = false;
 
 /*
 |--------------------------------------------------------------------------
@@ -85,7 +86,7 @@ function buildBundledConfig() {
 */
 
 async function startBundledAndLoad() {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || shuttingDown) {
     return;
   }
 
@@ -107,11 +108,20 @@ async function startBundledAndLoad() {
     return;
   }
 
+  if (shuttingDown) {
+    return;
+  }
+
   const result = await startServer(config);
 
   if (!result.success) {
     dialog.showErrorBox("Failed to start LAN Monitor", result.error);
 
+    return;
+  }
+
+  if (shuttingDown) {
+    stopServer();
     return;
   }
 
@@ -462,6 +472,24 @@ ipcMain.handle("server:start", async (event, config) => {
 
     /*
             |--------------------------------------------------------------------------
+            | Port Pre-Check
+            |--------------------------------------------------------------------------
+            |
+            | Avoid attaching to a foreign listener (orphan from a
+            | previous run). waitForServer would return true immediately
+            | and we would load the wrong app.
+            |
+            */
+
+    if (await checkServerPort(Number(config.port), "127.0.0.1")) {
+      throw new Error(
+        `Port ${config.port} is already in use.\n\n` +
+          "Close the other application or change the port.",
+      );
+    }
+
+    /*
+            |--------------------------------------------------------------------------
             | Start Child Process
             |--------------------------------------------------------------------------
             */
@@ -800,7 +828,13 @@ app.on("activate", () => {
 |
 */
 
+app.on("before-quit", () => {
+  shuttingDown = true;
+  stopServer();
+});
+
 app.on("will-quit", () => {
+  shuttingDown = true;
   stopServer();
 });
 

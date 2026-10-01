@@ -91,3 +91,31 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("SIGHUP", shutdown);
+
+/*
+|--------------------------------------------------------------------------
+| Parent-death watchdog
+|--------------------------------------------------------------------------
+|
+| Enabled only when the Electron shell spawns us with a stdin pipe
+| (LAN_MONITOR_PARENT_WATCH=1). Standalone / npm runs must NOT enable
+| this — GUI Electron often inherits an already-closed stdin, which
+| would shut the server down immediately after boot.
+|
+*/
+
+if (process.env.LAN_MONITOR_PARENT_WATCH === "1") {
+  const onParentGone = () => {
+    console.log("[server] parent pipe closed — shutting down");
+    shutdown();
+  };
+
+  try {
+    process.stdin.resume();
+    process.stdin.on("end", onParentGone);
+    process.stdin.on("close", onParentGone);
+    process.stdin.on("error", onParentGone);
+  } catch {
+    /* stdin not available */
+  }
+}

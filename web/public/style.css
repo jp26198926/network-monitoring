@@ -125,6 +125,11 @@ header {
   color: var(--up);
 }
 
+.ws-status.polling {
+  background: rgba(243, 156, 18, 0.15);
+  color: var(--unknown);
+}
+
 .ws-status.offline {
   background: rgba(231, 76, 60, 0.15);
   color: var(--down);

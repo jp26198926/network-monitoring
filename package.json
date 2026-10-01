@@ -1,7 +1,7 @@
 {
   "name": "electron-local-server",
   "productName": "LAN Monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Electron application launcher for local web applications",
   "author": "LAN Monitor",
   "main": "electron/main.js",
