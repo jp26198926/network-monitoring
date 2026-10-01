@@ -8,8 +8,6 @@ const state = {
   filterStatus: "all",
   searchQuery: "",
   selectedId: null,
-  ws: null,
-  reconnectDelay: 2000,
 };
 
 /* ---------------------------------------------------------------- */
@@ -251,49 +249,34 @@ function closeDetail() {
 }
 
 /* ---------------------------------------------------------------- */
-/* WebSocket                                                         */
+/* Live updates (WebSocket + polling fallback)                       */
 /* ---------------------------------------------------------------- */
 
-function connectWebSocket() {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/ws`;
-
-  const ws = new WebSocket(url);
-  state.ws = ws;
-
-  ws.onopen = () => {
-    state.reconnectDelay = 2000;
+function setLiveStatus(status) {
+  if (status === "live") {
     dom.wsStatus.textContent = "Live";
     dom.wsStatus.className = "ws-status online";
-    ws.send(JSON.stringify({ type: "hello" }));
-  };
-
-  ws.onclose = () => {
-    dom.wsStatus.textContent = "Reconnecting…";
+  } else if (status === "polling") {
+    dom.wsStatus.textContent = "Live (polling)";
+    dom.wsStatus.className = "ws-status polling";
+  } else {
+    dom.wsStatus.textContent = "Connecting…";
     dom.wsStatus.className = "ws-status offline";
-    setTimeout(connectWebSocket, state.reconnectDelay);
-    state.reconnectDelay = Math.min(15000, state.reconnectDelay * 1.5);
-  };
-
-  ws.onerror = () => {
-    ws.close();
-  };
-
-  ws.onmessage = (event) => {
-    try {
-      handleMessage(JSON.parse(event.data));
-    } catch {
-      /* ignore */
-    }
-  };
+  }
 }
 
 function handleMessage(msg) {
   switch (msg.type) {
     case "snapshot": {
-      state.devices.clear();
+      const prev = state.devices;
+      state.devices = new Map();
       for (const d of msg.devices || []) {
-        state.devices.set(d.id, { ...d, _samples: [], _rtt: null });
+        const existing = prev.get(d.id);
+        state.devices.set(d.id, {
+          ...d,
+          _samples: existing?._samples || [],
+          _rtt: existing?._rtt ?? null,
+        });
       }
       if (msg.summary) {
         state.summary = msg.summary;
@@ -434,4 +417,7 @@ document.addEventListener("keydown", (event) => {
 /* ---------------------------------------------------------------- */
 
 loadDevices();
-connectWebSocket();
+Live.connect({
+  onMessage: handleMessage,
+  onStatus: setLiveStatus,
+});
