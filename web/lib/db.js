@@ -1,6 +1,7 @@
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const config = require("../config");
+const auth = require("./auth");
 
 const DB_FILE = path.join(config.DATA_DIR, "monitor.db");
 
@@ -54,7 +55,18 @@ function open() {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
+
+  seedDefaultAdmin();
 
   return db;
 }
@@ -273,6 +285,120 @@ function summary() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Users                                                               */
+/* ------------------------------------------------------------------ */
+
+const VALID_ROLES = ["admin", "technician", "viewer"];
+
+function isValidRole(role) {
+  return VALID_ROLES.includes(role);
+}
+
+function toUserDto(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function seedDefaultAdmin() {
+  const count = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+
+  if (count > 0) {
+    return;
+  }
+
+  const now = Date.now();
+
+  db.prepare(
+    "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run("admin", auth.hashPassword("admin"), "admin", now, now);
+}
+
+function countUsers() {
+  return db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+}
+
+function countAdmins() {
+  return db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n;
+}
+
+function listUsers() {
+  return db
+    .prepare(
+      "SELECT id, username, role, created_at, updated_at FROM users ORDER BY username ASC",
+    )
+    .all()
+    .map(toUserDto);
+}
+
+function getUserById(id) {
+  return toUserDto(
+    db
+      .prepare(
+        "SELECT id, username, role, created_at, updated_at FROM users WHERE id = ?",
+      )
+      .get(id),
+  );
+}
+
+function getUserByIdWithHash(id) {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(id) || null;
+}
+
+function getUserByUsername(username) {
+  return (
+    db.prepare("SELECT * FROM users WHERE username = ?").get(String(username).trim()) ||
+    null
+  );
+}
+
+function createUser({ username, password, role }) {
+  const name = String(username || "").trim();
+  const now = Date.now();
+
+  db.prepare(
+    "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(name, auth.hashPassword(password), role, now, now);
+
+  return getUserById(getUserByUsername(name).id);
+}
+
+function updateUser(id, { username, password, role }) {
+  const existing = getUserByIdWithHash(id);
+
+  if (!existing) {
+    return null;
+  }
+
+  const name = username !== undefined ? String(username).trim() : existing.username;
+  const nextRole = role !== undefined ? role : existing.role;
+  const nextHash =
+    password !== undefined && password !== "" && password !== null
+      ? auth.hashPassword(password)
+      : existing.password_hash;
+  const now = Date.now();
+
+  db.prepare(
+    "UPDATE users SET username = ?, password_hash = ?, role = ?, updated_at = ? WHERE id = ?",
+  ).run(name, nextHash, nextRole, now, id);
+
+  return getUserById(id);
+}
+
+function deleteUser(id) {
+  const result = db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  return result.changes > 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Retention / pruning                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -315,4 +441,16 @@ module.exports = {
   listEventsForDevice,
   summary,
   prune,
+  VALID_ROLES,
+  isValidRole,
+  seedDefaultAdmin,
+  countUsers,
+  countAdmins,
+  listUsers,
+  getUserById,
+  getUserByIdWithHash,
+  getUserByUsername,
+  createUser,
+  updateUser,
+  deleteUser,
 };

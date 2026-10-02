@@ -397,9 +397,19 @@ dom.deviceRows.addEventListener("click", (event) => {
 
 dom.closeDrawer.addEventListener("click", closeDetail);
 
-dom.refreshBtn.addEventListener("click", () => {
+dom.refreshBtn.addEventListener("click", async () => {
+  if (!Auth.canMutate()) {
+    if (!Auth.isLoggedIn()) {
+      await Auth.openLogin();
+      applyAuthUi();
+    } else {
+      Modal.alert("Your role does not allow scanning.");
+    }
+    return;
+  }
+
   dom.refreshBtn.disabled = true;
-  fetch("/api/scan", { method: "POST" }).finally(() => {
+  fetch("/api/scan", { method: "POST", credentials: "same-origin" }).finally(() => {
     setTimeout(() => {
       dom.refreshBtn.disabled = false;
     }, 2000);
@@ -413,9 +423,22 @@ document.addEventListener("keydown", (event) => {
 });
 
 /* ---------------------------------------------------------------- */
+/* Auth gating                                                       */
+/* ---------------------------------------------------------------- */
+
+function applyAuthUi() {
+  const can = Auth.canMutate();
+  dom.refreshBtn.disabled = !can;
+  dom.refreshBtn.title = can ? "Force full sweep" : "Login as admin or technician to scan";
+}
+
+window.addEventListener("auth:changed", applyAuthUi);
+
+/* ---------------------------------------------------------------- */
 /* Boot                                                              */
 /* ---------------------------------------------------------------- */
 
+Auth.ensure().then(applyAuthUi);
 loadDevices();
 Live.connect({
   onMessage: handleMessage,
