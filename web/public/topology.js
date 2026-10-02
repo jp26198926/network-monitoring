@@ -131,6 +131,15 @@ function clearDirty() {
 }
 
 /* ---------------------------------------------------------------- */
+/* Client identity (ignore self-originated WS topology events)       */
+/* ---------------------------------------------------------------- */
+
+const CLIENT_ID = uuid();
+
+let remotePromptActive = false;
+let pendingRemoteDiagram = null;
+
+/* ---------------------------------------------------------------- */
 /* Viewport: transform                                               */
 /* ---------------------------------------------------------------- */
 
@@ -182,8 +191,12 @@ function renderNodes() {
       el.classList.add("connect-source");
     }
 
-    const live = node.deviceId ? state.liveStatus.get(node.deviceId) : null;
+    let live = node.deviceId ? state.liveStatus.get(node.deviceId) : null;
+    if (!live && node.ip) live = state.ipStatus.get(node.ip);
     const status = live ? live.status : null;
+
+    if (status === "up") el.classList.add("is-up");
+    else if (status === "down") el.classList.add("is-down");
 
     el.innerHTML = `
       <div class="node-icon">
@@ -684,6 +697,7 @@ async function loadDiagramList() {
     const data = await res.json();
     state.diagrams = data.topologies || [];
 
+    const prev = state.current?.id || dom.diagramSelect.value;
     dom.diagramSelect.innerHTML = "";
 
     if (!state.diagrams.length) {
@@ -700,6 +714,8 @@ async function loadDiagramList() {
       opt.textContent = d.name;
       dom.diagramSelect.appendChild(opt);
     }
+
+    if (prev) dom.diagramSelect.value = prev;
   } catch {
     /* ignore */
   }
@@ -721,11 +737,76 @@ async function openDiagram(id) {
   }
 }
 
+async function applyRemoteDiagram(diagram) {
+  const prevSelection = state.selection;
+  state.current = diagram;
+  clearDirty();
+
+  if (prevSelection.kind === "node" && state.current.nodes.some((n) => n.id === prevSelection.id)) {
+    state.selection = prevSelection;
+  } else if (prevSelection.kind === "link" && state.current.links.some((l) => l.id === prevSelection.id)) {
+    state.selection = prevSelection;
+  } else {
+    state.selection = { kind: null, id: null };
+    closeProps();
+  }
+
+  renderAll();
+  dom.diagramSelect.value = diagram.id;
+  dom.canvasHint.classList.toggle("hidden", state.current.nodes.length > 0);
+}
+
+async function handleRemoteDeleted(id) {
+  await loadDiagramList();
+  if (!state.current || state.current.id !== id) return;
+
+  state.current = null;
+  state.selection = { kind: null, id: null };
+  clearDirty();
+  closeProps();
+
+  if (state.diagrams.length) {
+    await openDiagram(state.diagrams[0].id);
+  } else {
+    renderAll();
+    dom.canvasHint.classList.remove("hidden");
+    dom.diagramSelect.value = "";
+  }
+}
+
+async function promptRemoteReload(diagram) {
+  if (remotePromptActive) {
+    pendingRemoteDiagram = diagram;
+    return;
+  }
+
+  remotePromptActive = true;
+  const reload = await Modal.confirm(
+    `"${diagram.name}" was changed by another client.\nReload and discard your unsaved edits?`,
+    {
+      title: "Diagram changed",
+      okLabel: "Reload",
+      cancelLabel: "Keep mine",
+    },
+  );
+  remotePromptActive = false;
+
+  const next = pendingRemoteDiagram || diagram;
+  pendingRemoteDiagram = null;
+
+  if (reload) {
+    await applyRemoteDiagram(next);
+  }
+}
+
 async function createDiagram(name) {
   try {
     const res = await fetch("/api/topologies", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Client-Id": CLIENT_ID,
+      },
       body: JSON.stringify({ name: name || "Untitled", nodes: [], links: [] }),
     });
     const data = await res.json();
@@ -742,7 +823,10 @@ async function saveDiagram() {
   try {
     const res = await fetch(`/api/topologies/${state.current.id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Client-Id": CLIENT_ID,
+      },
       body: JSON.stringify({
         name: state.current.name,
         nodes: state.current.nodes,
@@ -771,7 +855,10 @@ async function deleteDiagram() {
   if (!ok) return;
 
   try {
-    await fetch(`/api/topologies/${state.current.id}`, { method: "DELETE" });
+    await fetch(`/api/topologies/${state.current.id}`, {
+      method: "DELETE",
+      headers: { "X-Client-Id": CLIENT_ID },
+    });
     state.current = null;
     await loadDiagramList();
 
@@ -872,6 +959,8 @@ function closeDeviceDrawer() {
 /* Live updates (WebSocket + polling fallback)                       */
 /* ---------------------------------------------------------------- */
 
+let prevLiveStatus = null;
+
 function setLiveStatus(status) {
   if (status === "live") {
     dom.wsStatus.textContent = "Live";
@@ -883,9 +972,49 @@ function setLiveStatus(status) {
     dom.wsStatus.textContent = "Connecting…";
     dom.wsStatus.className = "ws-status offline";
   }
+
+  if (status === "live" && prevLiveStatus && prevLiveStatus !== "live") {
+    onLiveRestored();
+  }
+  prevLiveStatus = status;
 }
 
-function handleWsMessage(msg) {
+async function onLiveRestored() {
+  await loadDiagramList();
+  if (state.current && !state.dirty) {
+    await openDiagram(state.current.id);
+  }
+}
+
+async function handleWsMessage(msg) {
+  if (msg.type === "topology.created") {
+    if (msg.clientId && msg.clientId === CLIENT_ID) return;
+    await loadDiagramList();
+    return;
+  }
+
+  if (msg.type === "topology.updated") {
+    if (msg.clientId && msg.clientId === CLIENT_ID) return;
+    if (!msg.diagram) return;
+
+    await loadDiagramList();
+
+    if (!state.current || state.current.id !== msg.diagram.id) return;
+
+    if (state.dirty) {
+      await promptRemoteReload(msg.diagram);
+    } else {
+      await applyRemoteDiagram(msg.diagram);
+    }
+    return;
+  }
+
+  if (msg.type === "topology.deleted") {
+    if (msg.clientId && msg.clientId === CLIENT_ID) return;
+    await handleRemoteDeleted(msg.id);
+    return;
+  }
+
   if (msg.type === "snapshot") {
     for (const d of msg.devices || []) {
       const prev = state.liveStatus.get(d.id);
@@ -937,7 +1066,7 @@ function handleWsMessage(msg) {
         }
       }
     }
-    refreshNodeLatencies();
+    refreshNodeStatuses();
     return;
   }
 
@@ -961,15 +1090,23 @@ function refreshNodeStatuses() {
       live = state.ipStatus.get(node.ip);
     }
 
-    if (!live) continue;
-
     const el = dom.world.querySelector(`[data-node-id="${node.id}"]`);
     if (!el) continue;
+
+    if (!live) {
+      el.classList.remove("is-up", "is-down");
+      const ring0 = el.querySelector(".node-status-ring");
+      if (ring0) ring0.className = "node-status-ring";
+      continue;
+    }
 
     const ring = el.querySelector(".node-status-ring");
     if (ring) {
       ring.className = `node-status-ring ${live.status || ""}`;
     }
+
+    el.classList.toggle("is-up", live.status === "up");
+    el.classList.toggle("is-down", live.status === "down");
 
     let latencyEl = el.querySelector(".node-latency");
     if (live.rttMs != null) {
@@ -998,38 +1135,6 @@ function refreshNodeStatuses() {
         dom.propLiveRtt.textContent = live.rttMs != null ? `${live.rttMs} ms` : "—";
       }
     }
-  }
-}
-
-function refreshNodeLatencies() {
-  if (!state.current) return;
-
-  for (const node of state.current.nodes) {
-    // resolve latency: by deviceId first, then by IP fallback
-    let live = null;
-
-    if (node.deviceId) {
-      live = state.liveStatus.get(node.deviceId);
-    }
-
-    if (!live && node.ip) {
-      live = state.ipStatus.get(node.ip);
-    }
-
-    if (!live || live.rttMs == null) continue;
-
-    const el = dom.world.querySelector(`[data-node-id="${node.id}"]`);
-    if (!el) continue;
-
-    let latencyEl = el.querySelector(".node-latency");
-    if (!latencyEl) {
-      latencyEl = document.createElement("div");
-      latencyEl.className = "node-latency";
-      el.appendChild(latencyEl);
-    }
-
-    latencyEl.textContent = `${live.rttMs} ms`;
-    latencyEl.className = `node-latency ${live.status === "down" ? "down" : ""}`;
   }
 }
 

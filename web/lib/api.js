@@ -6,6 +6,7 @@ const config = require("../config");
 const subnet = require("./subnet");
 const monitor = require("./monitor");
 const topologyStore = require("./topology-store");
+const wsHub = require("./ws-hub");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
@@ -218,6 +219,11 @@ async function handleApi(req, res, pathname, query) {
     try {
       const body = await readBody(req);
       const diagram = topologyStore.create(body);
+      wsHub.broadcast({
+        type: "topology.created",
+        clientId: req.headers["x-client-id"] || null,
+        diagram,
+      });
       return sendJson(res, 201, { diagram });
     } catch (error) {
       return sendJson(res, 400, { error: error.message });
@@ -249,6 +255,11 @@ async function handleApi(req, res, pathname, query) {
           return sendJson(res, 404, { error: "Topology not found" });
         }
 
+        wsHub.broadcast({
+          type: "topology.updated",
+          clientId: req.headers["x-client-id"] || null,
+          diagram,
+        });
         return sendJson(res, 200, { diagram });
       } catch (error) {
         return sendJson(res, 400, { error: error.message });
@@ -262,6 +273,11 @@ async function handleApi(req, res, pathname, query) {
         return sendJson(res, 404, { error: "Topology not found" });
       }
 
+      wsHub.broadcast({
+        type: "topology.deleted",
+        clientId: req.headers["x-client-id"] || null,
+        id,
+      });
       return sendJson(res, 200, { ok: true });
     }
   }

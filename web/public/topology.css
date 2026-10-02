@@ -281,6 +281,41 @@
 .node-status-ring.up   { border-color: #22c55e; }
 .node-status-ring.down { border-color: #e74c3c; }
 
+.node.is-up {
+  background: var(--up);
+  border-color: var(--up);
+}
+
+.node.is-down {
+  background: var(--down);
+  border-color: var(--down);
+}
+
+.node.is-up .node-icon svg,
+.node.is-down .node-icon svg {
+  stroke: #0f1419;
+}
+
+.node.is-up .node-label,
+.node.is-down .node-label {
+  color: #0f1419;
+}
+
+.node.is-up .node-ip,
+.node.is-down .node-ip {
+  color: rgba(15, 20, 25, 0.8);
+}
+
+.node.is-up .node-latency,
+.node.is-down .node-latency {
+  color: #0f1419;
+}
+
+.node.is-up .node-status-ring,
+.node.is-down .node-status-ring {
+  border-color: rgba(15, 20, 25, 0.35);
+}
+
 .node-label {
   font-size: 10px;
   font-weight: 600;
