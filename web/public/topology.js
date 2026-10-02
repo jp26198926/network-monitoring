@@ -191,8 +191,12 @@ function renderNodes() {
       el.classList.add("connect-source");
     }
 
-    const live = node.deviceId ? state.liveStatus.get(node.deviceId) : null;
+    let live = node.deviceId ? state.liveStatus.get(node.deviceId) : null;
+    if (!live && node.ip) live = state.ipStatus.get(node.ip);
     const status = live ? live.status : null;
+
+    if (status === "up") el.classList.add("is-up");
+    else if (status === "down") el.classList.add("is-down");
 
     el.innerHTML = `
       <div class="node-icon">
@@ -1062,7 +1066,7 @@ async function handleWsMessage(msg) {
         }
       }
     }
-    refreshNodeLatencies();
+    refreshNodeStatuses();
     return;
   }
 
@@ -1086,15 +1090,23 @@ function refreshNodeStatuses() {
       live = state.ipStatus.get(node.ip);
     }
 
-    if (!live) continue;
-
     const el = dom.world.querySelector(`[data-node-id="${node.id}"]`);
     if (!el) continue;
+
+    if (!live) {
+      el.classList.remove("is-up", "is-down");
+      const ring0 = el.querySelector(".node-status-ring");
+      if (ring0) ring0.className = "node-status-ring";
+      continue;
+    }
 
     const ring = el.querySelector(".node-status-ring");
     if (ring) {
       ring.className = `node-status-ring ${live.status || ""}`;
     }
+
+    el.classList.toggle("is-up", live.status === "up");
+    el.classList.toggle("is-down", live.status === "down");
 
     let latencyEl = el.querySelector(".node-latency");
     if (live.rttMs != null) {
@@ -1123,38 +1135,6 @@ function refreshNodeStatuses() {
         dom.propLiveRtt.textContent = live.rttMs != null ? `${live.rttMs} ms` : "—";
       }
     }
-  }
-}
-
-function refreshNodeLatencies() {
-  if (!state.current) return;
-
-  for (const node of state.current.nodes) {
-    // resolve latency: by deviceId first, then by IP fallback
-    let live = null;
-
-    if (node.deviceId) {
-      live = state.liveStatus.get(node.deviceId);
-    }
-
-    if (!live && node.ip) {
-      live = state.ipStatus.get(node.ip);
-    }
-
-    if (!live || live.rttMs == null) continue;
-
-    const el = dom.world.querySelector(`[data-node-id="${node.id}"]`);
-    if (!el) continue;
-
-    let latencyEl = el.querySelector(".node-latency");
-    if (!latencyEl) {
-      latencyEl = document.createElement("div");
-      latencyEl.className = "node-latency";
-      el.appendChild(latencyEl);
-    }
-
-    latencyEl.textContent = `${live.rttMs} ms`;
-    latencyEl.className = `node-latency ${live.status === "down" ? "down" : ""}`;
   }
 }
 
