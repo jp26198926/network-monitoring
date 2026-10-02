@@ -1142,11 +1142,50 @@ function refreshNodeStatuses() {
 /* Events                                                            */
 /* ---------------------------------------------------------------- */
 
+async function ensureCanMutate() {
+  if (Auth.canMutate()) {
+    return true;
+  }
+
+  if (!Auth.isLoggedIn()) {
+    await Auth.openLogin();
+    applyAuthUi();
+    return Auth.canMutate();
+  }
+
+  await Modal.alert("Your role does not allow editing.");
+  return false;
+}
+
+function applyAuthUi() {
+  const can = Auth.canMutate();
+
+  const gated = [
+    dom.newDiagramBtn,
+    dom.renameDiagramBtn,
+    dom.deleteDiagramBtn,
+    dom.connectModeBtn,
+    dom.addNodeBtn,
+    dom.addDeviceBtn,
+    dom.saveBtn,
+  ];
+
+  for (const btn of gated) {
+    if (!btn) continue;
+    btn.disabled = !can;
+    btn.title = can ? btn.title : "Login as admin or technician to edit";
+  }
+}
+
 function bindEvents() {
   // toolbar
   dom.selectModeBtn.addEventListener("click", () => setMode("select"));
-  dom.connectModeBtn.addEventListener("click", () => setMode("connect"));
+  dom.connectModeBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
+    setMode("connect");
+  });
   dom.addNodeBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
     const type = await Modal.prompt("Node type:", "generic", {
       title: "Add node",
       input: "select",
@@ -1164,27 +1203,40 @@ function bindEvents() {
     });
     if (type) addNode(type.trim().toLowerCase() || "generic");
   });
-  dom.addDeviceBtn.addEventListener("click", openDeviceDrawer);
+  dom.addDeviceBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
+    openDeviceDrawer();
+  });
   dom.zoomInBtn.addEventListener("click", () => zoomBy(1.2));
   dom.zoomOutBtn.addEventListener("click", () => zoomBy(1 / 1.2));
   dom.zoomResetBtn.addEventListener("click", () => {
     state.viewport = { x: 0, y: 0, scale: 1 };
     applyTransform();
   });
-  dom.saveBtn.addEventListener("click", saveDiagram);
+  dom.saveBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
+    saveDiagram();
+  });
 
   // diagram
   dom.diagramSelect.addEventListener("change", () => {
     if (dom.diagramSelect.value) openDiagram(dom.diagramSelect.value);
   });
   dom.newDiagramBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
     const name = await Modal.prompt("Diagram name:", "New Diagram", {
       title: "New diagram",
     });
     if (name) createDiagram(name);
   });
-  dom.renameDiagramBtn.addEventListener("click", renameDiagram);
-  dom.deleteDiagramBtn.addEventListener("click", deleteDiagram);
+  dom.renameDiagramBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
+    renameDiagram();
+  });
+  dom.deleteDiagramBtn.addEventListener("click", async () => {
+    if (!(await ensureCanMutate())) return;
+    deleteDiagram();
+  });
 
   // props
   dom.closeProps.addEventListener("click", clearSelection);
@@ -1210,12 +1262,13 @@ function bindEvents() {
   });
 
   // keyboard
-  document.addEventListener("keydown", (e) => {
+  document.addEventListener("keydown", async (e) => {
     // skip when typing in inputs
     if (e.target.matches("input, textarea, select")) return;
 
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
+      if (!(await ensureCanMutate())) return;
       deleteSelection();
     } else if (e.key === "Escape") {
       if (state.connectFrom) {
@@ -1226,9 +1279,11 @@ function bindEvents() {
     } else if (e.key === "v" || e.key === "V") {
       setMode("select");
     } else if (e.key === "c" || e.key === "C") {
+      if (!(await ensureCanMutate())) return;
       setMode("connect");
     } else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
+      if (!(await ensureCanMutate())) return;
       saveDiagram();
     } else if ((e.ctrlKey || e.metaKey) && e.key === "0") {
       e.preventDefault();
@@ -1269,6 +1324,9 @@ async function init() {
     onMessage: handleWsMessage,
     onStatus: setLiveStatus,
   });
+  window.addEventListener("auth:changed", applyAuthUi);
+  await Auth.ensure();
+  applyAuthUi();
   await loadDevices();
   await loadDiagramList();
 

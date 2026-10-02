@@ -1,6 +1,6 @@
 # LAN Monitor
 
-Electron desktop launcher + LAN network monitoring server with a real-time dashboard and a Packet Tracer-style topology editor.
+Electron desktop launcher + LAN network monitoring server with a real-time dashboard, a Packet Tracer-style topology editor, and role-based user management.
 
 ## What it does
 
@@ -10,6 +10,7 @@ Electron desktop launcher + LAN network monitoring server with a real-time dashb
 - **Topology editor** — drag-and-drop network diagram with typed device icons, connectors, zoom/pan, and live status badges
 - **Monitors custom/public IPs** — any node with a free-text IP (e.g. `8.8.8.8`) is probed automatically
 - **Persists history** — SQLite database (14-day samples, 90-day events) survives restarts
+- **User accounts & roles** — login popup, three roles (admin / technician / viewer), admin-managed users page
 
 ## Quick start
 
@@ -26,11 +27,19 @@ npm start
 cd web && npm run dev
 # Dashboard:  http://localhost:3000
 # Topology:   http://localhost:3000/topology
-
+# Users:      http://localhost:3000/users  (admin only)
 
 ```
 
 From any other device on your LAN, open `http://<host-ip>:3000` (the LAN URL is shown in the launcher after start).
+
+### Default login
+
+| Username | Password | Role  |
+| -------- | -------- | ----- |
+| `admin`  | `admin`  | admin |
+
+Seeded automatically on first boot. Change it right away via **Account → Change password** or the Users page. Dashboard and topology are viewable without logging in; mutations (scan, settings, topology edits) and the Users page require signing in via the header **Login** button.
 
 ## Packaging
 
@@ -76,14 +85,19 @@ web/                       Monitoring server + dashboard (Node 24)
 │   ├── ping.js            ICMP probe via system ping (locale-aware parse)
 │   ├── arp.js             MAC enrichment from `arp -a`
 │   ├── hostname.js        Reverse DNS + nbtstat fallback
-│   ├── db.js              SQLite via node:sqlite (devices, samples, events)
+│   ├── db.js              SQLite via node:sqlite (devices, samples, events, users)
+│   ├── auth.js            Password hashing (scrypt) + cookie sessions
 │   ├── monitor.js         Scan scheduler, worker pool, state machine
-│   ├── api.js             REST API + static file serving
+│   ├── api.js             REST API + static file serving + role gates
 │   ├── ws-hub.js          WebSocket broadcast hub
 │   └── topology-store.js  Topology diagram persistence (JSON)
 └── public/
     ├── index.html/js/css  Monitoring dashboard
-    └── topology.html/js/css  Topology editor
+    ├── topology.html/js/css  Topology editor
+    ├── users.html/js      User management (admin only)
+    ├── auth.js            Login modal, account menu, role helpers
+    ├── live.js            WebSocket client + polling fallback
+    └── modal.js           Shared alert/confirm/prompt dialogs
 ```
 
 The Electron shell is optional — `web/` runs standalone. The launcher just manages the child process and loads the dashboard in a BrowserWindow.
@@ -99,21 +113,51 @@ The Electron shell is optional — `web/` runs standalone. The launcher just man
 
 ## API
 
-| Method  | Path                                | Description                                |
-| ------- | ----------------------------------- | ------------------------------------------ |
-| GET     | `/api/summary`                      | Totals, online/offline counts, avg latency |
-| GET     | `/api/devices`                      | Device list (filter by `?status=`, `?q=`)  |
-| GET     | `/api/devices/:id`                  | Device detail + recent samples             |
-| GET     | `/api/devices/:id/history?hours=24` | Latency samples + up/down events           |
-| GET     | `/api/events`                       | Recent up/down events                      |
-| GET/PUT | `/api/settings`                     | Scan intervals, concurrency, retention     |
-| GET     | `/api/adapters`                     | Network interfaces (for settings dropdown) |
-| POST    | `/api/scan`                         | Force immediate full sweep                 |
-| GET     | `/api/topologies`                   | List saved diagrams                        |
-| GET     | `/api/topologies/:id`               | Full diagram (nodes + links)               |
-| POST    | `/api/topologies`                   | Create diagram                             |
-| PUT     | `/api/topologies/:id`               | Save diagram                               |
-| DELETE  | `/api/topologies/:id`               | Delete diagram                             |
+Public reads are open; writes require a session cookie (see [Users & access control](#users--access-control)).
+
+| Method  | Path                                | Access              | Description                                |
+| ------- | ----------------------------------- | ------------------- | ------------------------------------------ |
+| GET     | `/api/summary`                      | public              | Totals, online/offline counts, avg latency |
+| GET     | `/api/devices`                      | public              | Device list (filter by `?status=`, `?q=`)  |
+| GET     | `/api/devices/:id`                  | public              | Device detail + recent samples             |
+| GET     | `/api/devices/:id/history?hours=24` | public              | Latency samples + up/down events           |
+| GET     | `/api/events`                       | public              | Recent up/down events                      |
+| GET     | `/api/adapters`                     | public              | Network interfaces (for settings dropdown) |
+| GET     | `/api/settings`                     | public              | Read scan configuration                    |
+| PUT     | `/api/settings`                     | admin, technician   | Update scan intervals / retention          |
+| POST    | `/api/scan`                         | admin, technician   | Force immediate full sweep                 |
+| GET     | `/api/topologies`                   | public              | List saved diagrams                        |
+| GET     | `/api/topologies/:id`               | public              | Full diagram (nodes + links)               |
+| POST    | `/api/topologies`                   | admin, technician   | Create diagram                             |
+| PUT     | `/api/topologies/:id`               | admin, technician   | Save diagram                               |
+| DELETE  | `/api/topologies/:id`               | admin, technician   | Delete diagram                             |
+| POST    | `/api/auth/login`                   | public              | Sign in → sets `lan_session` cookie        |
+| POST    | `/api/auth/logout`                  | any                 | Clear session                              |
+| GET     | `/api/auth/me`                      | any                 | Current user `{id, username, role}`        |
+| PUT     | `/api/auth/password`                | any                 | Change own password                        |
+| GET     | `/api/users`                        | admin               | List users                                 |
+| POST    | `/api/users`                        | admin               | Create user `{username, password, role}`   |
+| GET     | `/api/users/:id`                    | admin               | Get one user                               |
+| PUT     | `/api/users/:id`                    | admin               | Update user (blank password = keep)        |
+| DELETE  | `/api/users/:id`                    | admin               | Delete user (not self / not last admin)    |
+
+Errors: `401 {error}` when not signed in, `403 {error}` when the role is insufficient, `400 {error}` on validation failures.
+
+## Users & access control
+
+Sessions are HttpOnly cookies (`lan_session`, 7-day TTL). Passwords are hashed with `node:crypto` scrypt. A default `admin`/`admin` account is seeded when the `users` table is empty.
+
+| Role          | Dashboard (view) | Scan / settings | Topology (edit) | Users page |
+| ------------- | ---------------- | --------------- | --------------- | ---------- |
+| **admin**     | ✓                | ✓               | ✓               | ✓          |
+| **technician**| ✓                | ✓               | ✓               | ✗          |
+| **viewer**    | ✓                | ✗               | ✗               | ✗          |
+| **anonymous** | ✓                | ✗               | ✗               | ✗          |
+
+- Dashboard and topology are readable without logging in — the header **Login** button opens a popup modal when a mutation is attempted.
+- Any signed-in user can change their own password via **Account**. Only admins can create/edit/delete other users (including resetting passwords and assigning roles).
+- The Users page lives at `/users`; non-admins get an access-denied screen (the nav link is hidden for them).
+- Guardrails: you cannot delete your own account, demote the last admin, or create duplicate usernames.
 
 ## WebSocket (`/ws`)
 
@@ -140,6 +184,7 @@ Open `/topology` to design network diagrams:
 - **Properties** — edit type, IP, hostname, MAC, notes per node; bind to a scanned device for live status
 - **Live status** — nodes with an IP show a green/red ring and latency chip, updated live via WebSocket (works for custom/public IPs too)
 - **Save/load** — named diagrams persisted to `web/data/topologies.json`, survive restarts
+- **Access** — viewing is open to everyone; adding, editing, connecting, saving and deleting requires an admin or technician login (viewer/anonymous get view-only)
 
 ### Keyboard shortcuts
 
@@ -157,7 +202,7 @@ Open `/topology` to design network diagrams:
 
 | File                       | Contents                                               |
 | -------------------------- | ------------------------------------------------------ |
-| `web/data/monitor.db`      | SQLite: devices, latency samples, up/down events       |
+| `web/data/monitor.db`      | SQLite: devices, latency samples, up/down events, users |
 | `web/data/settings.json`   | Scan configuration (intervals, concurrency, retention) |
 | `web/data/topologies.json` | Saved topology diagrams                                |
 
@@ -165,7 +210,7 @@ In development, all runtime data lives in `web/data/` (gitignored). Packaged bui
 
 ## Configuration
 
-Settings are editable via `PUT /api/settings` or the dashboard:
+Settings are editable via `PUT /api/settings` (admin or technician) or the dashboard:
 
 | Setting              | Default | Description                                      |
 | -------------------- | ------- | ------------------------------------------------ |
@@ -192,4 +237,5 @@ Settings are editable via `PUT /api/settings` or the dashboard:
 - **electron-builder** — Windows NSIS / macOS dmg / Linux AppImage+deb packaging
 - **`ws`** — WebSocket server (only runtime dependency)
 - **`node:sqlite`** — built-in SQLite, no native compilation
+- **`node:crypto` scrypt** — password hashing (no bcrypt/argon2 dependency)
 - **Vanilla HTML/CSS/JS** — no framework, no bundler, no CDN

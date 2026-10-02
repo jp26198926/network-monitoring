@@ -526,6 +526,97 @@ header {
 }
 
 /* ---------------------------------------------------------------- */
+/* Auth / account                                                    */
+/* ---------------------------------------------------------------- */
+
+.account-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.account-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.account-role,
+.role-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+
+.account-role.role-admin,
+.role-badge.role-admin {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--accent);
+}
+
+.account-role.role-technician,
+.role-badge.role-technician {
+  background: rgba(46, 204, 113, 0.12);
+  border-color: rgba(46, 204, 113, 0.35);
+  color: var(--up);
+}
+
+.auth-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.auth-field .modal-input,
+.auth-field .modal-select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth-error {
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid rgba(231, 76, 60, 0.4);
+  color: var(--down);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.users-table td {
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------- */
 /* Responsive                                                        */
 /* ---------------------------------------------------------------- */
 

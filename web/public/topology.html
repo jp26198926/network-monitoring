@@ -18,10 +18,12 @@
     <nav class="main-nav">
       <a href="/">Dashboard</a>
       <a href="/topology" class="active">Topology</a>
+      <a href="/users" class="nav-users hidden">Users</a>
     </nav>
 
     <div class="header-actions">
       <div id="wsStatus" class="ws-status offline">Connecting…</div>
+      <div id="accountArea" class="account-area"></div>
     </div>
   </header>
 
@@ -138,6 +140,7 @@
   </div>
 
   <script src="modal.js"></script>
+  <script src="auth.js"></script>
   <script src="live.js"></script>
   <script src="topology.js"></script>
 </body>

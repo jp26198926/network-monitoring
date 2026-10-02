@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LAN Monitor — Users</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>LAN Monitor</h1>
+      <div class="subnet-label">User Management</div>
+    </div>
+
+    <nav class="main-nav">
+      <a href="/">Dashboard</a>
+      <a href="/topology">Topology</a>
+      <a href="/users" class="nav-users active hidden">Users</a>
+    </nav>
+
+    <div class="header-actions">
+      <div id="accountArea" class="account-area"></div>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <div class="tabs">
+      <span class="text-muted" id="userCount">—</span>
+    </div>
+    <button id="addUserBtn" class="btn">+ Add user</button>
+  </section>
+
+  <section class="device-table-wrap">
+    <table class="device-table users-table">
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Created</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="userRows"></tbody>
+    </table>
+    <div id="emptyState" class="empty-state hidden">No users found.</div>
+    <div id="accessDenied" class="empty-state hidden">
+      You need admin access to view this page.
+      <div style="margin-top:16px">
+        <button id="deniedLoginBtn" class="btn">Login</button>
+        <a href="/" class="btn btn-secondary" style="margin-left:8px;text-decoration:none;display:inline-block">Back to Dashboard</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- User form modal -->
+  <div id="userModal" class="modal-overlay hidden">
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 class="modal-title" id="userModalTitle">Add user</h2>
+        <button type="button" class="btn-icon" id="closeUserModal" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body auth-modal-body">
+        <div id="userModalError" class="auth-error hidden"></div>
+
+        <label class="auth-field">
+          <span>Username</span>
+          <input id="fieldUsername" type="text" class="modal-input" autocomplete="off" placeholder="username">
+        </label>
+
+        <label class="auth-field">
+          <span id="passwordLabel">Password</span>
+          <input id="fieldPassword" type="password" class="modal-input" autocomplete="new-password" placeholder="password">
+        </label>
+
+        <label class="auth-field">
+          <span>Role</span>
+          <select id="fieldRole" class="modal-select">
+            <option value="viewer">viewer</option>
+            <option value="technician">technician</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="cancelUserModal">Cancel</button>
+        <button type="button" class="btn" id="saveUserBtn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="modal.js"></script>
+  <script src="auth.js"></script>
+  <script src="users.js"></script>
+</body>
+</html>

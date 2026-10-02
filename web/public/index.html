@@ -16,6 +16,7 @@
     <nav class="main-nav">
       <a href="/" class="active">Dashboard</a>
       <a href="/topology">Topology</a>
+      <a href="/users" class="nav-users hidden">Users</a>
     </nav>
 
     <div class="tiles">
@@ -40,6 +41,7 @@
     <div class="header-actions">
       <div id="wsStatus" class="ws-status offline">Connecting…</div>
       <button id="refreshBtn" class="btn" title="Force full sweep">Scan now</button>
+      <div id="accountArea" class="account-area"></div>
     </div>
   </header>
 
@@ -94,6 +96,7 @@
   </aside>
 
   <script src="modal.js"></script>
+  <script src="auth.js"></script>
   <script src="live.js"></script>
   <script src="app.js"></script>
 </body>
