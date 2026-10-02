@@ -684,6 +684,7 @@ async function loadDiagramList() {
     const data = await res.json();
     state.diagrams = data.topologies || [];
 
+    const prev = state.current?.id || dom.diagramSelect.value;
     dom.diagramSelect.innerHTML = "";
 
     if (!state.diagrams.length) {
@@ -700,6 +701,8 @@ async function loadDiagramList() {
       opt.textContent = d.name;
       dom.diagramSelect.appendChild(opt);
     }
+
+    if (prev) dom.diagramSelect.value = prev;
   } catch {
     /* ignore */
   }
