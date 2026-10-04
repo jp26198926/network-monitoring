@@ -499,7 +499,7 @@ function initViewport() {
     applyTransform();
   }, { passive: false });
 
-  dom.viewport.addEventListener("pointerdown", async (e) => {
+  dom.viewport.addEventListener("pointerdown", (e) => {
     const nodeEl = e.target.closest(".node");
     const linkEl = e.target.closest("[data-link-id]");
 
@@ -522,7 +522,7 @@ function initViewport() {
       const nodeId = nodeEl.dataset.nodeId;
       selectNode(nodeId);
 
-      if (!(await ensureCanMutate())) return;
+      if (!Auth.canMutate()) return;
 
       const node = state.current.nodes.find((n) => n.id === nodeId);
       const worldStart = screenToWorld(e.clientX, e.clientY);
