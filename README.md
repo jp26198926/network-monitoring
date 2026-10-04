@@ -48,16 +48,16 @@ Build a distributable that ships `web/` (including `socket.io`) with the app. Pa
 
 ```bash
 # Windows installer (run on Windows)
-npm run build        # → dist/LAN Monitor-1.2.0-setup.exe
+npm run build        # → dist/LAN Monitor-1.2.1-setup.exe
 
 # Unpacked smoke test (no installer)
 npm run build:dir    # → dist/win-unpacked/LAN Monitor.exe
 
 # macOS (run on a Mac)
-npm run build:mac    # → dist/LAN Monitor-1.2.0.dmg + .zip
+npm run build:mac    # → dist/LAN Monitor-1.2.1.dmg + .zip
 
 # Linux (run on Linux)
-npm run build:linux  # → dist/LAN Monitor-1.2.0.AppImage + .deb
+npm run build:linux  # → dist/LAN Monitor-1.2.1.AppImage + .deb
 ```
 
 Build on the target OS (macOS `.dmg` cannot be built from Windows). After changing anything under `web/`, just re-run the build script — it reinstalls web production deps and recopies `web/` into the package.
@@ -156,6 +156,7 @@ Sessions are HttpOnly cookies (`lan_session`, 7-day TTL). Passwords are hashed w
 | **anonymous** | ✓                | ✗               | ✗               | ✗          |
 
 - Dashboard and topology are readable without logging in — the header **Login** button opens a popup modal when a mutation is attempted.
+- Unauthorized actions are gated in layers: the control is hidden (or disabled for read-only fields), and any path that is still reachable (keyboard shortcuts, node dragging) falls back to a login prompt when anonymous or a "role does not allow editing" modal for viewer.
 - Any signed-in user can change their own password via **Account**. Only admins can create/edit/delete other users (including resetting passwords and assigning roles).
 - The Users page lives at `/users`; non-admins get an access-denied screen (the nav link is hidden for them).
 - Guardrails: you cannot delete your own account, demote the last admin, or create duplicate usernames.
@@ -188,7 +189,7 @@ Open `/topology` to design network diagrams:
 - **Properties** — edit type, IP, hostname, MAC, notes per node; bind to a scanned device for live status
 - **Live status** — nodes with an IP show a green/red ring and latency chip, updated live via socket.io (works for custom/public IPs too)
 - **Save/load** — named diagrams persisted to `web/data/topologies.json`, survive restarts
-- **Access** — viewing is open to everyone; adding, editing, connecting, saving and deleting requires an admin or technician login (viewer/anonymous get view-only)
+- **Access** — viewing is open to everyone. Adding, editing, connecting, saving and deleting requires an admin or technician login; for viewer/anonymous the mutating buttons are hidden, the properties panel becomes a read-only inspector, and any edit shortcut or drag attempt shows a login prompt (anonymous) or a "role does not allow editing" modal
 
 ### Keyboard shortcuts
 

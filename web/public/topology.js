@@ -452,7 +452,8 @@ function bindPropsEvents() {
   dom.deleteLinkBtn.addEventListener("click", () => deleteSelection());
 }
 
-function deleteSelection() {
+async function deleteSelection() {
+  if (!(await ensureCanMutate())) return;
   if (!state.current) return;
 
   if (state.selection.kind === "node") {
@@ -498,7 +499,7 @@ function initViewport() {
     applyTransform();
   }, { passive: false });
 
-  dom.viewport.addEventListener("pointerdown", (e) => {
+  dom.viewport.addEventListener("pointerdown", async (e) => {
     const nodeEl = e.target.closest(".node");
     const linkEl = e.target.closest("[data-link-id]");
 
@@ -520,6 +521,8 @@ function initViewport() {
     if (nodeEl) {
       const nodeId = nodeEl.dataset.nodeId;
       selectNode(nodeId);
+
+      if (!(await ensureCanMutate())) return;
 
       const node = state.current.nodes.find((n) => n.id === nodeId);
       const worldStart = screenToWorld(e.clientX, e.clientY);
@@ -1144,7 +1147,7 @@ async function ensureCanMutate() {
 function applyAuthUi() {
   const can = Auth.canMutate();
 
-  const gated = [
+  const gatedButtons = [
     dom.newDiagramBtn,
     dom.renameDiagramBtn,
     dom.deleteDiagramBtn,
@@ -1152,12 +1155,33 @@ function applyAuthUi() {
     dom.addNodeBtn,
     dom.addDeviceBtn,
     dom.saveBtn,
+    dom.deleteNodeBtn,
+    dom.deleteLinkBtn,
   ];
 
-  for (const btn of gated) {
+  for (const btn of gatedButtons) {
     if (!btn) continue;
-    btn.disabled = !can;
-    btn.title = can ? btn.title : "Login as admin or technician to edit";
+    btn.classList.toggle("hidden", !can);
+  }
+
+  const gatedFields = [
+    dom.propType,
+    dom.propIp,
+    dom.propHostname,
+    dom.propMac,
+    dom.propNotes,
+    dom.propDevice,
+    dom.propLinkLabel,
+  ];
+
+  for (const field of gatedFields) {
+    if (!field) continue;
+    field.disabled = !can;
+  }
+
+  if (!can) {
+    closeDeviceDrawer();
+    setMode("select");
   }
 }
 
@@ -1252,8 +1276,7 @@ function bindEvents() {
 
     if (e.key === "Delete" || e.key === "Backspace") {
       e.preventDefault();
-      if (!(await ensureCanMutate())) return;
-      deleteSelection();
+      await deleteSelection();
     } else if (e.key === "Escape") {
       if (state.connectFrom) {
         state.connectFrom = null;
