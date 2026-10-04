@@ -6,7 +6,7 @@ Electron desktop launcher + LAN network monitoring server with a real-time dashb
 
 - **Discovers devices** on your local subnet (ping sweep + ARP enrichment)
 - **Tracks status** — online/offline with a 3-miss threshold, round-trip latency, uptime history
-- **Live dashboard** — WebSocket-pushed updates, device grid with sparklines, filter/search
+- **Live dashboard** — socket.io-pushed updates, device grid with sparklines, filter/search
 - **Topology editor** — drag-and-drop network diagram with typed device icons, connectors, zoom/pan, and live status badges
 - **Monitors custom/public IPs** — any node with a free-text IP (e.g. `8.8.8.8`) is probed automatically
 - **Persists history** — SQLite database (14-day samples, 90-day events) survives restarts
@@ -17,11 +17,12 @@ Electron desktop launcher + LAN network monitoring server with a real-time dashb
 ```bash
 # 1. Install dependencies
 npm install          # Electron (root)
-cd web && npm install # ws (web server)
+cd web && npm install # socket.io (web server)
 
 # 2a. Launch via the Electron desktop shell
 npm start
-# Click "Open Server Launcher" → set project to ./web, command `npm`, args `run dev`, host `0.0.0.0`, port `3000`
+# Open "Server Launcher" from the Application menu — the bundled ./web
+# project is pre-filled as the default (command `bundled`). Just click Start.
 
 # 2b. Or Manually run the monitoring server directly without electron
 cd web && npm run dev
@@ -43,20 +44,20 @@ Seeded automatically on first boot. Change it right away via **Account → Chang
 
 ## Packaging
 
-Build a distributable that ships `web/` (including `ws`) with the app. Packaged builds auto-start the bundled monitor with Electron's own Node — **the target machine does not need Node.js or npm**.
+Build a distributable that ships `web/` (including `socket.io`) with the app. Packaged builds auto-start the bundled monitor with Electron's own Node — **the target machine does not need Node.js or npm**.
 
 ```bash
 # Windows installer (run on Windows)
-npm run build        # → dist/LAN Monitor-1.0.0-setup.exe
+npm run build        # → dist/LAN Monitor-1.2.1-setup.exe
 
 # Unpacked smoke test (no installer)
 npm run build:dir    # → dist/win-unpacked/LAN Monitor.exe
 
 # macOS (run on a Mac)
-npm run build:mac    # → dist/LAN Monitor-1.0.0.dmg + .zip
+npm run build:mac    # → dist/LAN Monitor-1.2.1.dmg + .zip
 
 # Linux (run on Linux)
-npm run build:linux  # → dist/LAN Monitor-1.0.0.AppImage + .deb
+npm run build:linux  # → dist/LAN Monitor-1.2.1.AppImage + .deb
 ```
 
 Build on the target OS (macOS `.dmg` cannot be built from Windows). After changing anything under `web/`, just re-run the build script — it reinstalls web production deps and recopies `web/` into the package.
@@ -65,7 +66,7 @@ Build on the target OS (macOS `.dmg` cannot be built from Windows). After changi
 |---|---|
 | **Auto-start** | Packaged app launches the bundled LAN Monitor on start (dashboard at `http://localhost:3000`) |
 | **No Node required** | Server runs via `ELECTRON_RUN_AS_NODE` on Electron's bundled Node 24 |
-| **Custom projects** | Server Launcher still accepts any folder + command (needs Node/npm on that machine) |
+| **Custom projects** | Server Launcher still accepts any folder + command (needs Node/npm on that machine). With no saved config it auto-fills the bundled `web/` project as the default |
 | **Data location** | Packaged: `%APPDATA%\LAN Monitor\lan-monitor\` (Windows), `~/Library/Application Support/LAN Monitor/lan-monitor/` (macOS), `~/.config/LAN Monitor/lan-monitor/` (Linux) |
 | **Ports** | Default `3000` / host `0.0.0.0` — first run may prompt Windows Firewall (allow for LAN access) |
 
@@ -78,7 +79,7 @@ electron/                  Desktop shell (launcher, process lifecycle)
 └── preload.js             Context-isolated IPC bridge
 
 web/                       Monitoring server + dashboard (Node 24)
-├── server.js              Entry point (HTTP + WebSocket + monitor engine)
+├── server.js              Entry point (HTTP + socket.io + monitor engine)
 ├── config.js              Settings (web/data/settings.json)
 ├── lib/
 │   ├── subnet.js          NIC selection, CIDR math, adapter denylist
@@ -89,14 +90,14 @@ web/                       Monitoring server + dashboard (Node 24)
 │   ├── auth.js            Password hashing (scrypt) + cookie sessions
 │   ├── monitor.js         Scan scheduler, worker pool, state machine
 │   ├── api.js             REST API + static file serving + role gates
-│   ├── ws-hub.js          WebSocket broadcast hub
+│   ├── ws-hub.js          socket.io broadcast hub
 │   └── topology-store.js  Topology diagram persistence (JSON)
 └── public/
     ├── index.html/js/css  Monitoring dashboard
     ├── topology.html/js/css  Topology editor
     ├── users.html/js      User management (admin only)
     ├── auth.js            Login modal, account menu, role helpers
-    ├── live.js            WebSocket client + polling fallback
+    ├── live.js            socket.io client
     └── modal.js           Shared alert/confirm/prompt dialogs
 ```
 
@@ -155,23 +156,27 @@ Sessions are HttpOnly cookies (`lan_session`, 7-day TTL). Passwords are hashed w
 | **anonymous** | ✓                | ✗               | ✗               | ✗          |
 
 - Dashboard and topology are readable without logging in — the header **Login** button opens a popup modal when a mutation is attempted.
+- Unauthorized actions are gated in layers: the control is hidden (or disabled for read-only fields), and any path that is still reachable (keyboard shortcuts, node dragging) falls back to a login prompt when anonymous or a "role does not allow editing" modal for viewer.
 - Any signed-in user can change their own password via **Account**. Only admins can create/edit/delete other users (including resetting passwords and assigning roles).
 - The Users page lives at `/users`; non-admins get an access-denied screen (the nav link is hidden for them).
 - Guardrails: you cannot delete your own account, demote the last admin, or create duplicate usernames.
 
-## WebSocket (`/ws`)
+## Realtime (socket.io)
 
-Server → client (JSON):
+Named events over socket.io (default `/socket.io` path; the client is served from the server at `/socket.io/socket.io.js`).
 
-| Type                        | Payload                                                |
-| --------------------------- | ------------------------------------------------------ |
-| `snapshot`                  | Full device list + summary (on connect)                |
-| `device.up` / `device.down` | `{device: {id, ip, hostname, mac, rttMs, lastSeen}}`   |
-| `device.update`             | Hostname/MAC enrichment                                |
-| `latency`                   | `{samples: [{deviceId, ip, ts, rttMs}]}` (batched ~1s) |
-| `summary`                   | Live counters                                          |
+Server → client:
 
-Client → server: `{"type":"hello"}` (request snapshot), `{"type":"refresh"}` (force sweep).
+| Event                                       | Payload                                                |
+| ------------------------------------------- | ------------------------------------------------------ |
+| `snapshot`                                  | `{devices, summary}` — full state (on connect and on `hello`) |
+| `device.up` / `device.down` / `device.update` | device object `{id, ip, hostname, mac, rttMs, lastSeen}` |
+| `latency`                                   | samples array `[{deviceId, ip, ts, rttMs}]` (batched ~1s) |
+| `summary`                                   | live counters                                          |
+| `topology.created` / `topology.updated`     | `{clientId, diagram}`                                  |
+| `topology.deleted`                          | `{clientId, id}`                                       |
+
+Client → server: `hello` (re-request snapshot). Transports fall back from websocket to long-polling automatically, and socket.io handles reconnection.
 
 ## Topology editor
 
@@ -182,9 +187,9 @@ Open `/topology` to design network diagrams:
 - **Connect nodes** — Connect mode (or `C` key), click node A → B, label the link (e.g. `gig0/1`)
 - **Drag & zoom** — drag nodes to move, scroll to zoom (cursor-anchored, 0.25–2.5×), drag background to pan
 - **Properties** — edit type, IP, hostname, MAC, notes per node; bind to a scanned device for live status
-- **Live status** — nodes with an IP show a green/red ring and latency chip, updated live via WebSocket (works for custom/public IPs too)
+- **Live status** — nodes with an IP show a green/red ring and latency chip, updated live via socket.io (works for custom/public IPs too)
 - **Save/load** — named diagrams persisted to `web/data/topologies.json`, survive restarts
-- **Access** — viewing is open to everyone; adding, editing, connecting, saving and deleting requires an admin or technician login (viewer/anonymous get view-only)
+- **Access** — viewing is open to everyone. Adding, editing, connecting, saving and deleting requires an admin or technician login; for viewer/anonymous the mutating buttons are hidden, the properties panel becomes a read-only inspector, and any edit shortcut or drag attempt shows a login prompt (anonymous) or a "role does not allow editing" modal
 
 ### Keyboard shortcuts
 
@@ -235,7 +240,7 @@ Settings are editable via `PUT /api/settings` (admin or technician) or the dashb
 - **Electron 44** — desktop shell (optional)
 - **Node.js 24** — monitoring server (bundled via Electron's Node when packaged)
 - **electron-builder** — Windows NSIS / macOS dmg / Linux AppImage+deb packaging
-- **`ws`** — WebSocket server (only runtime dependency)
+- **`socket.io`** — realtime server + served client (only runtime dependency)
 - **`node:sqlite`** — built-in SQLite, no native compilation
 - **`node:crypto` scrypt** — password hashing (no bcrypt/argon2 dependency)
 - **Vanilla HTML/CSS/JS** — no framework, no bundler, no CDN

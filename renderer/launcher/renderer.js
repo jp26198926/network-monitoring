@@ -82,9 +82,17 @@ function setRunningState(running, result) {
 async function loadConfiguration() {
   const result = await window.electronAPI.loadConfig();
 
-  if (result.success && result.config) {
-    setConfig(result.config);
-    showMessage("Saved configuration loaded.");
+  if (result.success) {
+    if (result.defaults) {
+      setConfig(result.defaults);
+    }
+
+    if (result.config) {
+      setConfig(result.config);
+      showMessage("Saved configuration loaded.");
+    } else if (result.defaults && result.defaults.command === "bundled") {
+      showMessage("Bundled defaults applied.");
+    }
   }
 
   // IMPORTANT:
@@ -92,6 +100,14 @@ async function loadConfiguration() {
   const status = await window.electronAPI.getServerStatus();
 
   if (status.running) {
+    setConfig({
+      projectPath: status.projectPath,
+      command: status.command,
+      arguments: status.arguments,
+      host: status.host,
+      port: status.port,
+    });
+
     setRunningState(true, {
       localUrl: `http://localhost:${status.port}`,
       networkUrl: status.networkUrl,

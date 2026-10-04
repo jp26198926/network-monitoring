@@ -249,85 +249,71 @@ function closeDetail() {
 }
 
 /* ---------------------------------------------------------------- */
-/* Live updates (WebSocket + polling fallback)                       */
+/* Live updates (socket.io)                                          */
 /* ---------------------------------------------------------------- */
 
 function setLiveStatus(status) {
   if (status === "live") {
     dom.wsStatus.textContent = "Live";
     dom.wsStatus.className = "ws-status online";
-  } else if (status === "polling") {
-    dom.wsStatus.textContent = "Live (polling)";
-    dom.wsStatus.className = "ws-status polling";
   } else {
     dom.wsStatus.textContent = "Connecting…";
     dom.wsStatus.className = "ws-status offline";
   }
 }
 
-function handleMessage(msg) {
-  switch (msg.type) {
-    case "snapshot": {
-      const prev = state.devices;
-      state.devices = new Map();
-      for (const d of msg.devices || []) {
-        const existing = prev.get(d.id);
-        state.devices.set(d.id, {
-          ...d,
-          _samples: existing?._samples || [],
-          _rtt: existing?._rtt ?? null,
-        });
-      }
-      if (msg.summary) {
-        state.summary = msg.summary;
-      }
-      renderSummary();
-      renderDeviceTable();
-      break;
-    }
+function handleSnapshot(data) {
+  const prev = state.devices;
+  state.devices = new Map();
+  for (const d of data.devices || []) {
+    const existing = prev.get(d.id);
+    state.devices.set(d.id, {
+      ...d,
+      _samples: existing?._samples || [],
+      _rtt: existing?._rtt ?? null,
+    });
+  }
+  if (data.summary) {
+    state.summary = data.summary;
+  }
+  renderSummary();
+  renderDeviceTable();
+}
 
-    case "summary": {
-      state.summary = msg.summary || {};
-      renderSummary();
-      break;
-    }
+function handleSummary(summary) {
+  state.summary = summary || {};
+  renderSummary();
+}
 
-    case "device.up":
-    case "device.down":
-    case "device.update": {
-      const d = msg.device;
-      if (!d || d.id == null) break;
+function handleDevice(type, d) {
+  if (!d || d.id == null) return;
 
-      const existing = state.devices.get(d.id) || { id: d.id, _samples: [], _rtt: null };
-      state.devices.set(d.id, {
-        ...existing,
-        ...d,
-        status: d.status || existing.status,
-        lastSeen: d.lastSeen ?? existing.lastSeen,
-      });
+  const existing = state.devices.get(d.id) || { id: d.id, _samples: [], _rtt: null };
+  state.devices.set(d.id, {
+    ...existing,
+    ...d,
+    status: d.status || existing.status,
+    lastSeen: d.lastSeen ?? existing.lastSeen,
+  });
 
-      if (msg.type === "device.up" && d.rttMs != null) {
-        const dev = state.devices.get(d.id);
-        dev._rtt = d.rttMs;
-        pushSample(dev, d.rttMs);
-      }
+  if (type === "device.up" && d.rttMs != null) {
+    const dev = state.devices.get(d.id);
+    dev._rtt = d.rttMs;
+    pushSample(dev, d.rttMs);
+  }
 
-      renderDeviceTable();
-      break;
-    }
+  renderDeviceTable();
+}
 
-    case "latency": {
-      for (const s of msg.samples || []) {
-        const dev = state.devices.get(s.deviceId);
-        if (dev) {
-          dev._rtt = s.rttMs;
-          pushSample(dev, s.rttMs);
-        }
-      }
-      renderDeviceTable();
-      break;
+function handleLatency(samples) {
+  for (const s of samples || []) {
+    const dev = state.devices.get(s.deviceId);
+    if (dev) {
+      dev._rtt = s.rttMs;
+      pushSample(dev, s.rttMs);
     }
   }
+  renderDeviceTable();
 }
 
 function pushSample(device, rttMs) {
@@ -441,6 +427,13 @@ window.addEventListener("auth:changed", applyAuthUi);
 Auth.ensure().then(applyAuthUi);
 loadDevices();
 Live.connect({
-  onMessage: handleMessage,
+  handlers: {
+    snapshot: handleSnapshot,
+    summary: handleSummary,
+    "device.up": (d) => handleDevice("device.up", d),
+    "device.down": (d) => handleDevice("device.down", d),
+    "device.update": (d) => handleDevice("device.update", d),
+    latency: handleLatency,
+  },
   onStatus: setLiveStatus,
 });
