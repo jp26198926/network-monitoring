@@ -43,6 +43,40 @@ function getBundledWebRoot() {
   return fs.existsSync(path.join(root, "server.js")) ? root : null;
 }
 
+function getLauncherDefaults() {
+  const webRoot = getBundledWebRoot();
+
+  if (webRoot) {
+    return {
+      projectPath: webRoot,
+      command: "bundled",
+      arguments: "",
+      host: "0.0.0.0",
+      port: "3000",
+    };
+  }
+
+  return {
+    projectPath: "",
+    command: "npm",
+    arguments: "run dev",
+    host: "0.0.0.0",
+    port: "3000",
+  };
+}
+
+function withBundledFlags(config) {
+  if (config?.command === "bundled" || config?.bundled) {
+    return {
+      ...config,
+      bundled: true,
+      dataDir: config.dataDir || path.join(app.getPath("userData"), "lan-monitor"),
+    };
+  }
+
+  return config;
+}
+
 function buildBundledConfig() {
   const webRoot = getBundledWebRoot();
 
@@ -418,11 +452,14 @@ ipcMain.handle("config:save", async (event, config) => {
 */
 
 ipcMain.handle("config:load", async () => {
+  const defaults = getLauncherDefaults();
+
   try {
     if (!fs.existsSync(configFile)) {
       return {
         success: true,
         config: null,
+        defaults,
       };
     }
 
@@ -433,6 +470,7 @@ ipcMain.handle("config:load", async () => {
     return {
       success: true,
       config,
+      defaults,
     };
   } catch (error) {
     console.error("Failed to load configuration:", error);
@@ -452,6 +490,8 @@ ipcMain.handle("config:load", async () => {
 
 ipcMain.handle("server:start", async (event, config) => {
   try {
+    config = withBundledFlags(config);
+
     /*
             |--------------------------------------------------------------------------
             | Basic Validation
@@ -623,6 +663,8 @@ ipcMain.handle("server:stop", async () => {
 
 ipcMain.handle("server:restart", async (event, config) => {
   try {
+    config = withBundledFlags(config);
+
     /*
             |--------------------------------------------------------------------------
             | Stop Existing Server

@@ -956,7 +956,7 @@ function closeDeviceDrawer() {
 }
 
 /* ---------------------------------------------------------------- */
-/* Live updates (WebSocket + polling fallback)                       */
+/* Live updates (socket.io)                                          */
 /* ---------------------------------------------------------------- */
 
 let prevLiveStatus = null;
@@ -965,9 +965,6 @@ function setLiveStatus(status) {
   if (status === "live") {
     dom.wsStatus.textContent = "Live";
     dom.wsStatus.className = "ws-status online";
-  } else if (status === "polling") {
-    dom.wsStatus.textContent = "Live (polling)";
-    dom.wsStatus.className = "ws-status polling";
   } else {
     dom.wsStatus.textContent = "Connecting…";
     dom.wsStatus.className = "ws-status offline";
@@ -986,93 +983,80 @@ async function onLiveRestored() {
   }
 }
 
-async function handleWsMessage(msg) {
-  if (msg.type === "topology.created") {
-    if (msg.clientId && msg.clientId === CLIENT_ID) return;
-    await loadDiagramList();
-    return;
+async function handleTopologyCreated(msg) {
+  if (msg.clientId && msg.clientId === CLIENT_ID) return;
+  await loadDiagramList();
+}
+
+async function handleTopologyUpdated(msg) {
+  if (msg.clientId && msg.clientId === CLIENT_ID) return;
+  if (!msg.diagram) return;
+
+  await loadDiagramList();
+
+  if (!state.current || state.current.id !== msg.diagram.id) return;
+
+  if (state.dirty) {
+    await promptRemoteReload(msg.diagram);
+  } else {
+    await applyRemoteDiagram(msg.diagram);
   }
+}
 
-  if (msg.type === "topology.updated") {
-    if (msg.clientId && msg.clientId === CLIENT_ID) return;
-    if (!msg.diagram) return;
+async function handleTopologyDeleted(msg) {
+  if (msg.clientId && msg.clientId === CLIENT_ID) return;
+  await handleRemoteDeleted(msg.id);
+}
 
-    await loadDiagramList();
-
-    if (!state.current || state.current.id !== msg.diagram.id) return;
-
-    if (state.dirty) {
-      await promptRemoteReload(msg.diagram);
-    } else {
-      await applyRemoteDiagram(msg.diagram);
-    }
-    return;
-  }
-
-  if (msg.type === "topology.deleted") {
-    if (msg.clientId && msg.clientId === CLIENT_ID) return;
-    await handleRemoteDeleted(msg.id);
-    return;
-  }
-
-  if (msg.type === "snapshot") {
-    for (const d of msg.devices || []) {
-      const prev = state.liveStatus.get(d.id);
-      state.devices.set(d.id, { ...d, rttMs: prev?.rttMs ?? null });
-      state.liveStatus.set(d.id, { status: d.status, rttMs: prev?.rttMs ?? null });
-      if (d.ip) {
-        state.ipStatus.set(d.ip, { status: d.status, rttMs: prev?.rttMs ?? null });
-      }
-    }
-    refreshNodeStatuses();
-    return;
-  }
-
-  if (msg.type === "device.up" || msg.type === "device.down" || msg.type === "device.update") {
-    const d = msg.device;
-    if (!d) return;
-
-    const existing = state.devices.get(d.id) || {};
-    state.devices.set(d.id, { ...existing, ...d });
-
-    const status = d.status || state.liveStatus.get(d.id)?.status;
-    const rttMs = d.rttMs ?? state.liveStatus.get(d.id)?.rttMs ?? null;
-
-    state.liveStatus.set(d.id, { status, rttMs });
-
+function handleSnapshot(data) {
+  for (const d of data.devices || []) {
+    const prev = state.liveStatus.get(d.id);
+    state.devices.set(d.id, { ...d, rttMs: prev?.rttMs ?? null });
+    state.liveStatus.set(d.id, { status: d.status, rttMs: prev?.rttMs ?? null });
     if (d.ip) {
-      state.ipStatus.set(d.ip, { status, rttMs });
+      state.ipStatus.set(d.ip, { status: d.status, rttMs: prev?.rttMs ?? null });
     }
+  }
+  refreshNodeStatuses();
+}
 
-    refreshNodeStatuses();
-    return;
+function handleDevice(d) {
+  if (!d) return;
+
+  const existing = state.devices.get(d.id) || {};
+  state.devices.set(d.id, { ...existing, ...d });
+
+  const status = d.status || state.liveStatus.get(d.id)?.status;
+  const rttMs = d.rttMs ?? state.liveStatus.get(d.id)?.rttMs ?? null;
+
+  state.liveStatus.set(d.id, { status, rttMs });
+
+  if (d.ip) {
+    state.ipStatus.set(d.ip, { status, rttMs });
   }
 
-  if (msg.type === "latency") {
-    for (const s of msg.samples || []) {
-      const live = state.liveStatus.get(s.deviceId);
-      if (live) {
-        live.rttMs = s.rttMs;
+  refreshNodeStatuses();
+}
+
+function handleLatency(samples) {
+  for (const s of samples || []) {
+    const live = state.liveStatus.get(s.deviceId);
+    if (live) {
+      live.rttMs = s.rttMs;
+    } else {
+      state.liveStatus.set(s.deviceId, { status: "up", rttMs: s.rttMs });
+    }
+
+    if (s.ip) {
+      const ipLive = state.ipStatus.get(s.ip);
+      if (ipLive) {
+        ipLive.rttMs = s.rttMs;
       } else {
-        state.liveStatus.set(s.deviceId, { status: "up", rttMs: s.rttMs });
-      }
-
-      if (s.ip) {
-        const ipLive = state.ipStatus.get(s.ip);
-        if (ipLive) {
-          ipLive.rttMs = s.rttMs;
-        } else {
-          state.ipStatus.set(s.ip, { status: "up", rttMs: s.rttMs });
-        }
+        state.ipStatus.set(s.ip, { status: "up", rttMs: s.rttMs });
       }
     }
-    refreshNodeStatuses();
-    return;
   }
-
-  if (msg.type === "summary") {
-    /* ignore — not needed on topology page */
-  }
+  refreshNodeStatuses();
 }
 
 function refreshNodeStatuses() {
@@ -1321,7 +1305,16 @@ async function init() {
   bindEvents();
   applyTransform();
   Live.connect({
-    onMessage: handleWsMessage,
+    handlers: {
+      "topology.created": handleTopologyCreated,
+      "topology.updated": handleTopologyUpdated,
+      "topology.deleted": handleTopologyDeleted,
+      snapshot: handleSnapshot,
+      "device.up": handleDevice,
+      "device.down": handleDevice,
+      "device.update": handleDevice,
+      latency: handleLatency,
+    },
     onStatus: setLiveStatus,
   });
   window.addEventListener("auth:changed", applyAuthUi);

@@ -501,8 +501,7 @@ async function handleApi(req, res, pathname, query) {
     try {
       const body = await readBody(req);
       const diagram = topologyStore.create(body);
-      wsHub.broadcast({
-        type: "topology.created",
+      wsHub.broadcast("topology.created", {
         clientId: req.headers["x-client-id"] || null,
         diagram,
       });
@@ -543,8 +542,7 @@ async function handleApi(req, res, pathname, query) {
           return sendJson(res, 404, { error: "Topology not found" });
         }
 
-        wsHub.broadcast({
-          type: "topology.updated",
+        wsHub.broadcast("topology.updated", {
           clientId: req.headers["x-client-id"] || null,
           diagram,
         });
@@ -567,8 +565,7 @@ async function handleApi(req, res, pathname, query) {
         return sendJson(res, 404, { error: "Topology not found" });
       }
 
-      wsHub.broadcast({
-        type: "topology.deleted",
+      wsHub.broadcast("topology.deleted", {
         clientId: req.headers["x-client-id"] || null,
         id,
       });

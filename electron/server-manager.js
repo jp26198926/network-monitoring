@@ -385,7 +385,7 @@ function getServerStatus() {
 
     command: currentServerConfig?.command || null,
 
-    arguments: currentServerConfig?.arguments || null,
+    arguments: currentServerConfig?.arguments ?? null,
 
     host: currentServerConfig?.host || "0.0.0.0",
 

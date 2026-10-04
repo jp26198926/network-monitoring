@@ -1,51 +1,33 @@
-const { WebSocketServer } = require("ws");
+const { Server } = require("socket.io");
 
 const monitor = require("./monitor");
 
-let wss = null;
-let heartbeatTimer = null;
+let io = null;
 let latencyBuffer = [];
 let latencyFlushTimer = null;
 
 function attach(server) {
-  wss = new WebSocketServer({ server, path: "/ws" });
+  io = new Server(server);
 
-  wss.on("connection", (socket) => {
-    socket.isAlive = true;
-
-    console.log(`[ws] client connected (${wss.clients.size} total)`);
-
-    socket.on("pong", () => {
-      socket.isAlive = true;
-    });
-
-    socket.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        handleClientMessage(socket, msg);
-      } catch {
-        /* ignore malformed frames */
-      }
-    });
-
-    socket.on("error", () => {
-      /* ignore */
-    });
-
-    socket.on("close", () => {
-      console.log(`[ws] client disconnected (${wss.clients.size} total)`);
-    });
+  io.on("connection", (socket) => {
+    console.log(`[ws] client connected (${io.engine.clientsCount} total)`);
 
     // greet with a full snapshot
-    socket.send(
-      JSON.stringify({ type: "snapshot", ...monitor.snapshot() }),
-    );
+    socket.emit("snapshot", monitor.snapshot());
+
+    socket.on("hello", () => {
+      socket.emit("snapshot", monitor.snapshot());
+    });
+
+    socket.on("disconnect", () => {
+      console.log(`[ws] client disconnected (${io.engine.clientsCount} total)`);
+    });
   });
 
   // wire monitor events → broadcast
-  monitor.on("device.up", (device) => broadcast({ type: "device.up", device }));
-  monitor.on("device.down", (device) => broadcast({ type: "device.down", device }));
-  monitor.on("device.update", (device) => broadcast({ type: "device.update", device }));
+  monitor.on("device.up", (device) => broadcast("device.up", device));
+  monitor.on("device.down", (device) => broadcast("device.down", device));
+  monitor.on("device.update", (device) => broadcast("device.update", device));
 
   monitor.on("latency", (sample) => {
     latencyBuffer.push(sample);
@@ -57,67 +39,33 @@ function attach(server) {
       return;
     }
 
-    broadcast({ type: "latency", samples: latencyBuffer });
+    broadcast("latency", latencyBuffer);
     latencyBuffer = [];
   }, 1000);
 
   monitor.on("summary", (summary) => {
-    broadcast({ type: "summary", summary });
+    broadcast("summary", summary);
   });
 
-  // heartbeat: ping every 30s, drop dead sockets
-  heartbeatTimer = setInterval(() => {
-    for (const socket of wss.clients) {
-      if (!socket.isAlive) {
-        socket.terminate();
-        continue;
-      }
-
-      socket.isAlive = false;
-      socket.ping();
-    }
-  }, 30000);
-
-  console.log("[ws] hub attached at /ws");
+  console.log("[ws] hub attached at /socket.io");
 }
 
-function handleClientMessage(socket, msg) {
-  if (msg.type === "hello") {
-    socket.send(JSON.stringify({ type: "snapshot", ...monitor.snapshot() }));
+function broadcast(event, payload) {
+  if (!io) {
     return;
   }
 
-  if (msg.type === "refresh") {
-    monitor.forceFullSweep();
-  }
-}
-
-function broadcast(payload) {
-  if (!wss) {
-    return;
-  }
-
-  const frame = JSON.stringify(payload);
-
-  for (const socket of wss.clients) {
-    if (socket.readyState === 1) {
-      socket.send(frame);
-    }
-  }
+  io.emit(event, payload);
 }
 
 function close() {
-  clearInterval(heartbeatTimer);
   clearInterval(latencyFlushTimer);
-  heartbeatTimer = null;
   latencyFlushTimer = null;
+  latencyBuffer = [];
 
-  if (wss) {
-    for (const socket of wss.clients) {
-      socket.terminate();
-    }
-    wss.close();
-    wss = null;
+  if (io) {
+    io.disconnectSockets(true);
+    io = null;
   }
 }
 
