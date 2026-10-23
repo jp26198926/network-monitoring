@@ -1,10 +1,110 @@
 const { spawn, spawnSync } = require("child_process");
+const { EventEmitter } = require("events");
 const net = require("net");
 const fs = require("fs");
 const path = require("path");
 
+/*
+|--------------------------------------------------------------------------
+| Process State Bus
+|--------------------------------------------------------------------------
+|
+| Emits "change" whenever the child process transitions (started, exited,
+| failed). Main process forwards this to every window so the Launcher UI
+| never keeps showing "Running" after a crash.
+|
+*/
+
+const bus = new EventEmitter();
+bus.setMaxListeners(20);
+
 let serverProcess = null;
 let currentServerConfig = null;
+let lastSpawnError = null;
+let stderrTail = [];
+
+const STDERR_TAIL_LIMIT = 40;
+
+function isAlive(child) {
+  return !!(child && child.exitCode === null && child.killed === false && child.pid);
+}
+
+function pushStderrLine(line) {
+  const text = String(line).replace(/\s+$/, "");
+  if (!text) return;
+
+  stderrTail.push(text);
+
+  if (stderrTail.length > STDERR_TAIL_LIMIT) {
+    stderrTail = stderrTail.slice(-STDERR_TAIL_LIMIT);
+  }
+}
+
+function captureStream(stream, sink) {
+  if (!stream) return;
+
+  let buffer = "";
+
+  stream.on("data", (chunk) => {
+    sink.write(chunk);
+
+    buffer += chunk.toString("utf8");
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() || "";
+
+    for (const line of parts) {
+      pushStderrLine(line);
+    }
+  });
+
+  stream.on("end", () => {
+    if (buffer) pushStderrLine(buffer);
+  });
+}
+
+function clearProcessState() {
+  serverProcess = null;
+  currentServerConfig = null;
+}
+
+/**
+ * Pick the most useful line from captured stderr for a user-facing error.
+ * Stack tails like "Node.js v24.18.0" are noise — prefer the real message.
+ */
+function summarizeStderrTail() {
+  if (!stderrTail.length) {
+    return null;
+  }
+
+  const noise = /^(Node\.js v|Error: Cannot find module|Require stack:|at |{$|}$|\^$|\s*$)/i;
+
+  for (let i = stderrTail.length - 1; i >= 0; i--) {
+    const line = stderrTail[i];
+    if (
+      /error|cannot find|exception|eaddrinuse|eacces|enoent|failed|throw/i.test(line) &&
+      !/^at /.test(line)
+    ) {
+      return line;
+    }
+  }
+
+  for (let i = stderrTail.length - 1; i >= 0; i--) {
+    const line = stderrTail[i];
+    if (line.trim() && !noise.test(line)) {
+      return line;
+    }
+  }
+
+  return stderrTail[stderrTail.length - 1] || null;
+}
+
+function emitChange(reason, detail = {}) {
+  bus.emit("change", {
+    reason,
+    ...detail,
+    status: getServerStatus(),
+  });
+}
 
 /**
  * Validate that the project folder exists.
@@ -20,23 +120,31 @@ function validateProjectPath(projectPath) {
 }
 
 /**
- * Convert the argument string from the Launcher
- * into an array.
+ * Convert the argument string from the Launcher into an array.
+ * Supports double-quoted segments so paths with spaces survive.
  *
  * Example:
- * "run dev" → ["run", "dev"]
+ * 'run dev' → ["run", "dev"]
+ * 'node "C:\\My Project\\server.js"' → ["node", "C:\\My Project\\server.js"]
  */
 function parseArguments(argumentString) {
   if (!argumentString) {
     return [];
   }
 
-  return argumentString.trim().split(/\s+/).filter(Boolean);
+  const args = [];
+  const re = /"([^"]*)"|(\S+)/g;
+  let match;
+
+  while ((match = re.exec(argumentString)) !== null) {
+    args.push(match[1] !== undefined ? match[1] : match[2]);
+  }
+
+  return args.filter(Boolean);
 }
 
 /**
- * Windows requires .cmd for npm/npx
- * when shell execution is disabled.
+ * Windows requires .cmd for npm/npx when shell execution is disabled.
  */
 function normalizeCommand(command) {
   if (
@@ -52,14 +160,16 @@ function normalizeCommand(command) {
 /**
  * Spawn a command without shell: true.
  *
- * On Windows, .cmd/.bat files cannot be spawned directly
- * (they throw EINVAL). We run them through cmd.exe /c
- * instead of enabling shell: true, which would trigger
- * the DEP0190 deprecation warning.
+ * On Windows, only .cmd/.bat files need cmd.exe (they throw EINVAL when
+ * spawned directly). Wrapping every command in cmd.exe would interpret
+ * & | > %VAR% in user arguments — so we only wrap what actually needs it.
  */
 function spawnCommand(command, args, options) {
-  if (process.platform === "win32") {
-    return spawn("cmd.exe", ["/c", command, ...args], options);
+  if (
+    process.platform === "win32" &&
+    /\.(cmd|bat)$/i.test(command)
+  ) {
+    return spawn("cmd.exe", ["/d", "/s", "/c", command, ...args], options);
   }
 
   return spawn(command, args, options);
@@ -67,17 +177,29 @@ function spawnCommand(command, args, options) {
 
 /**
  * Start the user's web server.
+ *
+ * Resolves only after the OS reports the process handle. Async spawn
+ * failures (ENOENT, …) reject with the real error message instead of
+ * pretending success and dying silently during waitForServer.
  */
 function startServer(config) {
   return new Promise((resolve) => {
     try {
-      if (serverProcess) {
+      if (serverProcess && isAlive(serverProcess)) {
         resolve({
           success: false,
           error: "A server is already running.",
         });
 
         return;
+      }
+
+      /*
+       * Stale handle from a previous run — clear it so we don't
+       * refuse to start after a crash/exit race.
+       */
+      if (serverProcess) {
+        clearProcessState();
       }
 
       validateProjectPath(config.projectPath);
@@ -92,15 +214,11 @@ function startServer(config) {
       }
 
       const args = parseArguments(config.arguments);
-
       const command = normalizeCommand(config.command);
 
-      /**
-       * Save the current configuration in memory.
-       *
-       * This is important because when the Launcher
-       * is reopened, we need to know what server is
-       * currently running.
+      /*
+       * Save the current configuration in memory so the Launcher
+       * can show what is running when it is reopened.
        */
       currentServerConfig = {
         ...config,
@@ -109,16 +227,15 @@ function startServer(config) {
       const env = {
         ...process.env,
 
-        /**
-         * These values are available to
-         * the child web application through:
-         *
-         * process.env.HOST
-         * process.env.PORT
+        /*
+         * Available to the child as process.env.HOST / process.env.PORT.
          */
         HOST: config.host || "0.0.0.0",
         PORT: String(config.port),
       };
+
+      stderrTail = [];
+      lastSpawnError = null;
 
       console.log("");
       console.log("==============================");
@@ -154,12 +271,12 @@ function startServer(config) {
         serverProcess = spawn(process.execPath, [entry], {
           cwd: config.projectPath,
 
-          /**
+          /*
            * stdin pipe is kept open by the parent so the
            * child can exit when Electron dies (see
            * web/server.js stdin watchdog).
            */
-          stdio: ["pipe", "ignore", "ignore"],
+          stdio: ["pipe", "pipe", "pipe"],
 
           env,
 
@@ -169,72 +286,122 @@ function startServer(config) {
         /**
          * Start the child process.
          *
-         * We intentionally do NOT use:
-         *
-         * shell: true
-         *
-         * This avoids the Node DEP0190 warning.
+         * We intentionally do NOT use shell: true (DEP0190).
+         * stdout/stderr are piped so crash diagnostics are
+         * captured and mirrored to the parent console.
          */
         serverProcess = spawnCommand(command, args, {
           cwd: config.projectPath,
 
-          stdio: "inherit",
+          stdio: ["pipe", "pipe", "pipe"],
 
           env,
 
-          windowsHide: false,
+          windowsHide: true,
         });
       }
 
-      let resolved = false;
+      const child = serverProcess;
+
+      captureStream(child.stdout, process.stdout);
+      captureStream(child.stderr, process.stderr);
+
+      let settled = false;
+
+      const succeed = () => {
+        if (settled) return;
+        settled = true;
+        resolve({ success: true, pid: child.pid });
+      };
+
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+
+        if (serverProcess === child) {
+          clearProcessState();
+        }
+
+        lastSpawnError = error.message;
+        emitChange("spawn-error", { error: error.message });
+
+        resolve({
+          success: false,
+          error: error.message,
+        });
+      };
 
       /**
-       * Process failed to start.
+       * Process failed to start (ENOENT, EACCES, …).
        */
-      serverProcess.once("error", (error) => {
+      child.once("error", (error) => {
         console.error("Failed to start server:", error);
-
-        serverProcess = null;
-        currentServerConfig = null;
-
-        if (!resolved) {
-          resolved = true;
-
-          resolve({
-            success: false,
-            error: error.message,
-          });
-        }
+        fail(error);
       });
 
       /**
        * Process exited.
+       *
+       * Identity-guarded: a late exit from an old child must not
+       * wipe the state of a newly started server.
        */
-      serverProcess.on("exit", (code, signal) => {
+      child.on("exit", (code, signal) => {
         console.log(`Server exited. Code: ${code}, Signal: ${signal}`);
 
-        serverProcess = null;
-        currentServerConfig = null;
+        const wasCurrent = serverProcess === child;
+
+        if (wasCurrent) {
+          clearProcessState();
+        }
+
+        if (!settled) {
+          settled = true;
+
+          const detail =
+            summarizeStderrTail() ||
+            `exit code ${code ?? "null"}${signal ? ` signal ${signal}` : ""}`;
+
+          lastSpawnError = detail;
+
+          if (wasCurrent) {
+            emitChange("exit", { code, signal });
+          }
+
+          resolve({
+            success: false,
+            error: `The server process stopped before it became available. ${detail}`,
+          });
+
+          return;
+        }
+
+        if (wasCurrent) {
+          emitChange("exit", { code, signal });
+        }
       });
 
-      /**
-       * spawn() succeeded.
+      /*
+       * spawn() succeeded at the OS level.
        *
-       * IMPORTANT:
-       * This does NOT mean the web server is ready yet.
-       *
-       * waitForServer() will check the port afterward.
+       * Give async "error" / immediate "exit" a brief window to land
+       * so a bad command fails here with a real message instead of
+       * looking like a readiness timeout later.
        */
-      if (!resolved) {
-        resolved = true;
+      setTimeout(() => {
+        if (!isAlive(child)) {
+          fail(
+            new Error(
+              lastSpawnError ||
+                "The server process exited immediately after starting.",
+            ),
+          );
+          return;
+        }
 
-        resolve({
-          success: true,
-        });
-      }
+        succeed();
+      }, 75);
     } catch (error) {
-      serverProcess = null;
-      currentServerConfig = null;
+      clearProcessState();
 
       resolve({
         success: false,
@@ -245,8 +412,7 @@ function startServer(config) {
 }
 
 /**
- * Check whether something is listening
- * on the specified port.
+ * Check whether something is listening on the specified port.
  */
 function checkServerPort(port, host = "127.0.0.1") {
   return new Promise((resolve) => {
@@ -274,8 +440,7 @@ function checkServerPort(port, host = "127.0.0.1") {
 }
 
 /**
- * Wait until the web server is actually
- * listening on the configured port.
+ * Wait until the web server is actually listening on the configured port.
  */
 async function waitForServer(port, host = "127.0.0.1", timeout = 30000) {
   const startTime = Date.now();
@@ -284,9 +449,13 @@ async function waitForServer(port, host = "127.0.0.1", timeout = 30000) {
     /**
      * The child process already stopped.
      */
-    if (!serverProcess) {
+    if (!isAlive(serverProcess)) {
+      const detail = lastSpawnError || summarizeStderrTail();
+
       throw new Error(
-        "The server process stopped before the application became available.",
+        detail
+          ? `The server process stopped before the application became available. ${detail}`
+          : "The server process stopped before the application became available.",
       );
     }
 
@@ -309,15 +478,12 @@ async function waitForServer(port, host = "127.0.0.1", timeout = 30000) {
 /**
  * Stop the server.
  *
- * On Windows we use taskkill with /T
- * so child processes such as npm -> node
- * are also terminated.
+ * On Windows we use taskkill with /T so child processes such as
+ * npm → node are also terminated. spawnSync is required: an async
+ * kill is abandoned when Electron quits and orphans the server.
  *
- * taskkill is spawned with spawnSync so the
- * process tree is fully killed before this
- * returns. This matters on app quit, where an
- * async spawn would be abandoned mid-kill and
- * leave the web server running.
+ * After killing we wait briefly for the handle to die so a follow-up
+ * Start does not race a still-holding port.
  */
 function stopServer() {
   if (!serverProcess) {
@@ -326,11 +492,12 @@ function stopServer() {
     };
   }
 
-  const pid = serverProcess.pid;
+  const child = serverProcess;
+  const pid = child.pid;
 
   console.log(`Stopping server process ${pid}...`);
 
-  if (process.platform === "win32") {
+  if (process.platform === "win32" && pid) {
     const result = spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
       windowsHide: true,
       encoding: "utf8",
@@ -350,13 +517,21 @@ function stopServer() {
    * or the PID is the real node process.
    */
   try {
-    serverProcess.kill("SIGTERM");
+    child.kill("SIGTERM");
   } catch {
     /* already dead */
   }
 
-  serverProcess = null;
-  currentServerConfig = null;
+  /*
+   * Detach immediately so status reflects "stopped" from the UI's
+   * point of view. The exit handler is identity-guarded, so a late
+   * exit from this child cannot clobber a newer server.
+   */
+  if (serverProcess === child) {
+    clearProcessState();
+  }
+
+  emitChange("stopped", { pid });
 
   return {
     success: true,
@@ -366,30 +541,56 @@ function stopServer() {
 /**
  * Return the actual current server state.
  *
- * This is used by the Launcher when it
- * is opened again.
+ * "running" is true only when the child handle is still alive —
+ * not merely non-null. A crashed process must never report as running.
  */
 function getServerStatus() {
-  if (!serverProcess) {
+  const alive = isAlive(serverProcess);
+
+  if (!alive) {
+    if (serverProcess) {
+      clearProcessState();
+    }
+
     return {
       running: false,
+      alive: false,
+      ready: false,
     };
   }
 
   return {
     running: true,
+    alive: true,
 
     pid: serverProcess.pid,
 
     projectPath: currentServerConfig?.projectPath || null,
-
     command: currentServerConfig?.command || null,
-
     arguments: currentServerConfig?.arguments ?? null,
-
     host: currentServerConfig?.host || "0.0.0.0",
-
     port: currentServerConfig?.port || null,
+    bundled: !!(currentServerConfig?.bundled || currentServerConfig?.command === "bundled"),
+  };
+}
+
+/**
+ * Async status: also probes the port so "ready" means something
+ * is actually listening (not just a live handle).
+ */
+async function getServerStatusDetailed() {
+  const status = getServerStatus();
+
+  if (!status.running) {
+    return status;
+  }
+
+  const port = Number(status.port);
+  const ready = port ? await checkServerPort(port, "127.0.0.1") : false;
+
+  return {
+    ...status,
+    ready,
   };
 }
 
@@ -398,5 +599,7 @@ module.exports = {
   stopServer,
   waitForServer,
   getServerStatus,
+  getServerStatusDetailed,
   checkServerPort,
+  bus,
 };

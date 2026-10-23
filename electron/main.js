@@ -8,13 +8,72 @@ const {
   startServer,
   stopServer,
   waitForServer,
-  getServerStatus,
+  getServerStatusDetailed,
   checkServerPort,
+  bus: serverBus,
 } = require("./server-manager");
 
 let mainWindow = null;
 let launcherWindow = null;
 let shuttingDown = false;
+
+/*
+|--------------------------------------------------------------------------
+| Status Broadcast
+|--------------------------------------------------------------------------
+|
+| Push live server state to every window whenever the child process
+| starts, exits, or fails. The Launcher listens for this so it can
+| never keep showing "Running" after a crash.
+|
+*/
+
+function broadcastServerStatus(reason = "sync") {
+  getServerStatusDetailed()
+    .then((status) => {
+      const payload = { reason, ...status };
+
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send("server:status-changed", payload);
+        }
+      }
+    })
+    .catch(() => {
+      /* status probe is best-effort */
+    });
+}
+
+serverBus.on("change", (event) => {
+  broadcastServerStatus(event.reason || "change");
+
+  /*
+   * Child died unexpectedly while the main window is showing it —
+   * return to the placeholder so the UI does not keep a dead page.
+   */
+  if (
+    !shuttingDown &&
+    event.reason === "exit" &&
+    mainWindow &&
+    !mainWindow.isDestroyed()
+  ) {
+    mainWindow
+      .loadFile(path.join(__dirname, "..", "renderer", "app", "index.html"))
+      .catch(() => {
+        /* window may be closing */
+      });
+  }
+});
+
+async function loadAppPlaceholder() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  await mainWindow.loadFile(
+    path.join(__dirname, "..", "renderer", "app", "index.html"),
+  );
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -139,6 +198,8 @@ async function startBundledAndLoad() {
         "Close the other application or change the port in the Server Launcher.",
     );
 
+    createLauncherWindow();
+
     return;
   }
 
@@ -169,9 +230,11 @@ async function startBundledAndLoad() {
     return;
   }
 
-  if (mainWindow) {
-    await mainWindow.loadURL(`http://localhost:${config.port}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    await mainWindow.loadURL(`http://127.0.0.1:${config.port}`);
   }
+
+  broadcastServerStatus("bundled-started");
 }
 
 /*
@@ -575,7 +638,7 @@ ipcMain.handle("server:start", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    const localUrl = `http://localhost:${config.port}`;
+    const localUrl = `http://127.0.0.1:${config.port}`;
 
     const networkAddress = getNetworkAddress();
 
@@ -589,7 +652,7 @@ ipcMain.handle("server:start", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       await mainWindow.loadURL(localUrl);
     }
 
@@ -599,9 +662,11 @@ ipcMain.handle("server:start", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    if (launcherWindow) {
+    if (launcherWindow && !launcherWindow.isDestroyed()) {
       launcherWindow.close();
     }
+
+    broadcastServerStatus("started");
 
     return {
       success: true,
@@ -612,6 +677,14 @@ ipcMain.handle("server:start", async (event, config) => {
     };
   } catch (error) {
     console.error("Failed to start server:", error);
+
+    /*
+     * Never leave a half-started child behind — a leaked process
+     * is what makes the Launcher report "Running" for a server
+     * that is not actually serving anything.
+     */
+    stopServer();
+    broadcastServerStatus("start-failed");
 
     return {
       success: false,
@@ -636,14 +709,23 @@ ipcMain.handle("server:stop", async () => {
             |--------------------------------------------------------------------------
             */
 
-    if (result.success && mainWindow) {
-      await mainWindow.loadFile(
-        path.join(__dirname, "..", "renderer", "app", "index.html"),
-      );
+    if (result.success) {
+      await loadAppPlaceholder();
     }
 
+    broadcastServerStatus("stopped");
+
+    /*
+     * Give Windows a moment to release the port before a
+     * follow-up Start pre-check runs.
+     */
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500);
+    });
+
     return {
-      success: true,
+      success: result.success,
+      error: result.error,
     };
   } catch (error) {
     console.error("Failed to stop server:", error);
@@ -667,6 +749,28 @@ ipcMain.handle("server:restart", async (event, config) => {
 
     /*
             |--------------------------------------------------------------------------
+            | Validate BEFORE stopping the healthy server
+            |--------------------------------------------------------------------------
+            |
+            | A typo'd project path must not kill a running instance
+            | and then fail to start the replacement.
+            |
+            */
+
+    if (!config.projectPath) {
+      throw new Error("Project path is required.");
+    }
+
+    if (!config.command) {
+      throw new Error("Command is required.");
+    }
+
+    if (!config.port) {
+      throw new Error("Port is required.");
+    }
+
+    /*
+            |--------------------------------------------------------------------------
             | Stop Existing Server
             |--------------------------------------------------------------------------
             */
@@ -682,6 +786,23 @@ ipcMain.handle("server:restart", async (event, config) => {
     await new Promise((resolve) => {
       setTimeout(resolve, 1000);
     });
+
+    /*
+            |--------------------------------------------------------------------------
+            | Port Pre-Check
+            |--------------------------------------------------------------------------
+            |
+            | Same guard as server:start — never attach to a foreign
+            | or orphaned listener left behind by the previous tree.
+            |
+            */
+
+    if (await checkServerPort(Number(config.port), "127.0.0.1")) {
+      throw new Error(
+        `Port ${config.port} is still in use after stopping the previous server.\n\n` +
+          "Close the other application or change the port.",
+      );
+    }
 
     /*
             |--------------------------------------------------------------------------
@@ -701,7 +822,12 @@ ipcMain.handle("server:restart", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    await waitForServer(Number(config.port), "127.0.0.1", 30000);
+    try {
+      await waitForServer(Number(config.port), "127.0.0.1", 30000);
+    } catch (error) {
+      stopServer();
+      throw error;
+    }
 
     /*
             |--------------------------------------------------------------------------
@@ -709,7 +835,7 @@ ipcMain.handle("server:restart", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    const localUrl = `http://localhost:${config.port}`;
+    const localUrl = `http://127.0.0.1:${config.port}`;
 
     const networkAddress = getNetworkAddress();
 
@@ -723,7 +849,7 @@ ipcMain.handle("server:restart", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       await mainWindow.loadURL(localUrl);
     }
 
@@ -733,9 +859,11 @@ ipcMain.handle("server:restart", async (event, config) => {
             |--------------------------------------------------------------------------
             */
 
-    if (launcherWindow) {
+    if (launcherWindow && !launcherWindow.isDestroyed()) {
       launcherWindow.close();
     }
+
+    broadcastServerStatus("restarted");
 
     return {
       success: true,
@@ -746,6 +874,17 @@ ipcMain.handle("server:restart", async (event, config) => {
     };
   } catch (error) {
     console.error("Failed to restart server:", error);
+
+    /*
+     * The old server is already stopped at this point — make sure
+     * the UI reflects that instead of keeping a stale "Running".
+     */
+    stopServer();
+    broadcastServerStatus("restart-failed");
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await loadAppPlaceholder().catch(() => {});
+    }
 
     return {
       success: false,
@@ -766,8 +905,8 @@ ipcMain.handle("server:restart", async (event, config) => {
 |
 */
 
-ipcMain.handle("server:status", () => {
-  const status = getServerStatus();
+ipcMain.handle("server:status", async () => {
+  const status = await getServerStatusDetailed();
 
   /*
         |--------------------------------------------------------------------------
@@ -778,6 +917,8 @@ ipcMain.handle("server:status", () => {
   if (!status.running) {
     return {
       running: false,
+      alive: false,
+      ready: false,
     };
   }
 
@@ -791,6 +932,8 @@ ipcMain.handle("server:status", () => {
 
   return {
     running: true,
+    alive: true,
+    ready: !!status.ready,
 
     pid: status.pid,
 
@@ -804,7 +947,7 @@ ipcMain.handle("server:status", () => {
 
     port: status.port,
 
-    localUrl: `http://localhost:${status.port}`,
+    localUrl: `http://127.0.0.1:${status.port}`,
 
     networkUrl: networkAddress
       ? `http://${networkAddress}:${status.port}`

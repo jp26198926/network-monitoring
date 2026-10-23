@@ -1,51 +1,93 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-contextBridge.exposeInMainWorld("electronAPI", {
-  /*
-   * Launcher
-   */
+/*
+|--------------------------------------------------------------------------
+| File-Page Only API
+|--------------------------------------------------------------------------
+|
+| Expose the privileged bridge ONLY to our own file:// pages (placeholder
+| + launcher). After mainWindow navigates to http://localhost:<port> the
+| served web app must not be able to call server:stop / config:save.
+|
+*/
 
-  openLauncher: () => {
-    return ipcRenderer.invoke("launcher:open");
-  },
+const isLocalFilePage = (() => {
+  try {
+    return typeof location !== "undefined" && location.protocol === "file:";
+  } catch {
+    return false;
+  }
+})();
 
-  /*
-   * Folder picker
-   */
+if (isLocalFilePage) {
+  contextBridge.exposeInMainWorld("electronAPI", {
+    /*
+     * Launcher
+     */
 
-  selectProjectFolder: () => {
-    return ipcRenderer.invoke("project:select");
-  },
+    openLauncher: () => {
+      return ipcRenderer.invoke("launcher:open");
+    },
 
-  /*
-   * Server
-   */
+    /*
+     * Folder picker
+     */
 
-  startServer: (config) => {
-    return ipcRenderer.invoke("server:start", config);
-  },
+    selectProjectFolder: () => {
+      return ipcRenderer.invoke("project:select");
+    },
 
-  stopServer: () => {
-    return ipcRenderer.invoke("server:stop");
-  },
+    /*
+     * Server
+     */
 
-  restartServer: (config) => {
-    return ipcRenderer.invoke("server:restart", config);
-  },
+    startServer: (config) => {
+      return ipcRenderer.invoke("server:start", config);
+    },
 
-  getServerStatus: () => {
-    return ipcRenderer.invoke("server:status");
-  },
+    stopServer: () => {
+      return ipcRenderer.invoke("server:stop");
+    },
 
-  /*
-   * Configuration
-   */
+    restartServer: (config) => {
+      return ipcRenderer.invoke("server:restart", config);
+    },
 
-  saveConfig: (config) => {
-    return ipcRenderer.invoke("config:save", config);
-  },
+    getServerStatus: () => {
+      return ipcRenderer.invoke("server:status");
+    },
 
-  loadConfig: () => {
-    return ipcRenderer.invoke("config:load");
-  },
-});
+    /*
+     * Live status push (start / exit / crash / stop).
+     * Returns an unsubscribe function.
+     */
+
+    onServerStatus: (callback) => {
+      const listener = (_event, payload) => {
+        try {
+          callback(payload);
+        } catch {
+          /* never let a renderer callback break the bridge */
+        }
+      };
+
+      ipcRenderer.on("server:status-changed", listener);
+
+      return () => {
+        ipcRenderer.removeListener("server:status-changed", listener);
+      };
+    },
+
+    /*
+     * Configuration
+     */
+
+    saveConfig: (config) => {
+      return ipcRenderer.invoke("config:save", config);
+    },
+
+    loadConfig: () => {
+      return ipcRenderer.invoke("config:load");
+    },
+  });
+}
