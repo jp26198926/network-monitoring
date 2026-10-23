@@ -91,6 +91,30 @@
   margin: 0 4px;
 }
 
+.heartbeat-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.heartbeat-control label {
+  font-weight: 600;
+}
+
+.heartbeat-control .select {
+  min-width: 64px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.heartbeat-control .select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .select {
   background: var(--surface-2);
   color: var(--text);

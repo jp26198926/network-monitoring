@@ -42,6 +42,7 @@ const dom = {
   zoomOutBtn: $("zoomOutBtn"),
   zoomResetBtn: $("zoomResetBtn"),
   saveBtn: $("saveBtn"),
+  heartbeatSec: $("heartbeatSec"),
 
   propsPanel: $("propsPanel"),
   propsTitle: $("propsTitle"),
@@ -1184,6 +1185,58 @@ async function ensureCanMutate() {
   return false;
 }
 
+/* ---------------------------------------------------------------- */
+/* Heartbeat interval                                                */
+/* ---------------------------------------------------------------- */
+
+const HEARTBEAT_PRESETS = [1, 2, 5, 10, 30, 60];
+
+function syncHeartbeatSelect(heartbeatMs) {
+  if (!dom.heartbeatSec) return;
+
+  const seconds = Math.round((heartbeatMs || 5000) / 1000);
+  const matched = HEARTBEAT_PRESETS.includes(seconds);
+
+  if (!matched) {
+    const opt = document.createElement("option");
+    opt.value = String(seconds);
+    opt.textContent = `${seconds}s`;
+    dom.heartbeatSec.appendChild(opt);
+  }
+
+  dom.heartbeatSec.value = String(seconds);
+}
+
+async function loadHeartbeatSetting() {
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    syncHeartbeatSelect(data?.settings?.heartbeatMs);
+  } catch {
+    syncHeartbeatSelect(5000);
+  }
+}
+
+async function saveHeartbeatSetting(seconds) {
+  const heartbeatMs = Math.max(1, Number(seconds) || 5) * 1000;
+
+  const res = await fetch("/api/settings", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ heartbeatMs }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+
+  syncHeartbeatSelect(data?.settings?.heartbeatMs ?? heartbeatMs);
+  return data;
+}
+
 function applyAuthUi() {
   const can = Auth.canMutate();
 
@@ -1217,6 +1270,10 @@ function applyAuthUi() {
   for (const field of gatedFields) {
     if (!field) continue;
     field.disabled = !can;
+  }
+
+  if (dom.heartbeatSec) {
+    dom.heartbeatSec.disabled = !can;
   }
 
   if (!can) {
@@ -1265,6 +1322,21 @@ function bindEvents() {
     if (!(await ensureCanMutate())) return;
     saveDiagram();
   });
+
+  if (dom.heartbeatSec) {
+    dom.heartbeatSec.addEventListener("change", async () => {
+      if (!(await ensureCanMutate())) return;
+
+      const seconds = Number(dom.heartbeatSec.value);
+
+      try {
+        await saveHeartbeatSetting(seconds);
+      } catch (error) {
+        Modal.alert(`Failed to update heartbeat: ${error.message}`);
+        await loadHeartbeatSetting();
+      }
+    });
+  }
 
   // diagram
   dom.diagramSelect.addEventListener("change", () => {
@@ -1383,6 +1455,7 @@ async function init() {
   window.addEventListener("auth:changed", applyAuthUi);
   await Auth.ensure();
   applyAuthUi();
+  await loadHeartbeatSetting();
   await loadDevices();
   await loadDiagramList();
 

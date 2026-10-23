@@ -49,6 +49,18 @@
     </div>
 
     <div class="topo-toolbar-right">
+      <div class="heartbeat-control" title="How often topology nodes are pinged">
+        <label for="heartbeatSec">Ping</label>
+        <select id="heartbeatSec" class="select">
+          <option value="1">1s</option>
+          <option value="2">2s</option>
+          <option value="5">5s</option>
+          <option value="10">10s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+      <span class="tool-sep"></span>
       <span id="dirtyFlag" class="dirty-flag hidden">● Unsaved</span>
       <button id="saveBtn" class="btn" title="Save (Ctrl+S)">Save</button>
     </div>
