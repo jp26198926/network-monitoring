@@ -451,6 +451,7 @@ async function handleApi(req, res, pathname, query) {
         "retentionDays",
         "eventRetentionDays",
         "pingTimeoutMs",
+        "heartbeatMs",
       ];
 
       const partial = {};
@@ -466,6 +467,7 @@ async function handleApi(req, res, pathname, query) {
       monitor.rebuildTargets();
       monitor.scheduleFull();
       monitor.scheduleFast();
+      monitor.scheduleHeartbeat();
 
       return sendJson(res, 200, { settings });
     } catch (error) {

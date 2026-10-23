@@ -339,8 +339,9 @@ function selectNode(nodeId) {
   }
 
   // live info
-  if (node.deviceId && state.liveStatus.has(node.deviceId)) {
-    const live = state.liveStatus.get(node.deviceId);
+  let live = node.deviceId ? state.liveStatus.get(node.deviceId) : null;
+  if (!live && node.ip) live = state.ipStatus.get(node.ip);
+  if (live) {
     dom.propLiveInfo.classList.remove("hidden");
     dom.propLiveStatus.textContent = live.status;
     dom.propLiveRtt.textContent = live.rttMs != null ? `${live.rttMs} ms` : "—";
@@ -902,18 +903,22 @@ async function loadDevices() {
 
     state.devices.clear();
     for (const d of data.devices || []) {
-      state.devices.set(d.id, { ...d, rttMs: null });
+      const prev = state.liveStatus.get(d.id);
+      state.devices.set(d.id, { ...d, rttMs: prev?.rttMs ?? null });
     }
 
-    // hydrate live status
+    // hydrate live status (preserve last known rtt)
     for (const d of data.devices || []) {
-      state.liveStatus.set(d.id, { status: d.status, rttMs: null });
+      const prev = state.liveStatus.get(d.id);
+      const rttMs = prev?.rttMs ?? null;
+      state.liveStatus.set(d.id, { status: d.status, rttMs });
       if (d.ip) {
-        state.ipStatus.set(d.ip, { status: d.status, rttMs: null });
+        state.ipStatus.set(d.ip, { status: d.status, rttMs });
       }
     }
 
     renderDeviceList();
+    refreshNodeStatuses();
   } catch {
     /* ignore */
   }
@@ -1023,13 +1028,16 @@ function handleSnapshot(data) {
   refreshNodeStatuses();
 }
 
-function handleDevice(d) {
+function handleDevice(type, d) {
   if (!d) return;
 
   const existing = state.devices.get(d.id) || {};
   state.devices.set(d.id, { ...existing, ...d });
 
-  const status = d.status || state.liveStatus.get(d.id)?.status;
+  const status =
+    d.status ||
+    (type === "device.up" ? "up" : type === "device.down" ? "down" : undefined) ||
+    state.liveStatus.get(d.id)?.status;
   const rttMs = d.rttMs ?? state.liveStatus.get(d.id)?.rttMs ?? null;
 
   state.liveStatus.set(d.id, { status, rttMs });
@@ -1042,10 +1050,13 @@ function handleDevice(d) {
 }
 
 function handleLatency(samples) {
+  const affected = new Set();
+
   for (const s of samples || []) {
     const live = state.liveStatus.get(s.deviceId);
     if (live) {
       live.rttMs = s.rttMs;
+      live.status = "up";
     } else {
       state.liveStatus.set(s.deviceId, { status: "up", rttMs: s.rttMs });
     }
@@ -1054,12 +1065,41 @@ function handleLatency(samples) {
       const ipLive = state.ipStatus.get(s.ip);
       if (ipLive) {
         ipLive.rttMs = s.rttMs;
+        ipLive.status = "up";
       } else {
         state.ipStatus.set(s.ip, { status: "up", rttMs: s.rttMs });
       }
     }
+
+    if (state.current) {
+      for (const node of state.current.nodes) {
+        if (
+          (s.deviceId && node.deviceId === s.deviceId) ||
+          (s.ip && node.ip === s.ip)
+        ) {
+          affected.add(node.id);
+        }
+      }
+    }
   }
+
   refreshNodeStatuses();
+  if (affected.size) pulseNodes([...affected]);
+}
+
+function pulseNodes(nodeIds) {
+  for (const id of nodeIds) {
+    const el = dom.world.querySelector(`[data-node-id="${id}"]`);
+    if (!el) continue;
+    el.classList.remove("ping-pulse");
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add("ping-pulse");
+    el.addEventListener(
+      "animationend",
+      () => el.classList.remove("ping-pulse"),
+      { once: true },
+    );
+  }
 }
 
 function refreshNodeStatuses() {
@@ -1333,9 +1373,9 @@ async function init() {
       "topology.updated": handleTopologyUpdated,
       "topology.deleted": handleTopologyDeleted,
       snapshot: handleSnapshot,
-      "device.up": handleDevice,
-      "device.down": handleDevice,
-      "device.update": handleDevice,
+      "device.up": (d) => handleDevice("device.up", d),
+      "device.down": (d) => handleDevice("device.down", d),
+      "device.update": (d) => handleDevice("device.update", d),
       latency: handleLatency,
     },
     onStatus: setLiveStatus,

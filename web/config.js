@@ -16,6 +16,7 @@ const DEFAULTS = {
   retentionDays: 14,
   eventRetentionDays: 90,
   pingTimeoutMs: 1000,
+  heartbeatMs: 1000,
 };
 
 let cached = null;

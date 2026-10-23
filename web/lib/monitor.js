@@ -16,6 +16,7 @@ class Monitor extends EventEmitter {
     this.fullTimer = null;
     this.fastTimer = null;
     this.pruneTimer = null;
+    this.heartbeatTimer = null;
     this.sweeping = false;
     this.running = false;
     this.concurrency = config.get("concurrency") || 48;
@@ -39,6 +40,7 @@ class Monitor extends EventEmitter {
     this.scheduleFull();
     this.scheduleFast();
     this.schedulePrune();
+    this.scheduleHeartbeat();
 
     // kick off an initial sweep shortly after boot
     setTimeout(() => this.forceFullSweep(), 500);
@@ -54,9 +56,11 @@ class Monitor extends EventEmitter {
     clearInterval(this.fullTimer);
     clearInterval(this.fastTimer);
     clearInterval(this.pruneTimer);
+    clearInterval(this.heartbeatTimer);
     this.fullTimer = null;
     this.fastTimer = null;
     this.pruneTimer = null;
+    this.heartbeatTimer = null;
   }
 
   rebuildTargets() {
@@ -138,6 +142,36 @@ class Monitor extends EventEmitter {
         console.warn("[monitor] prune failed:", error.message);
       }
     }, 6 * 60 * 60 * 1000);
+  }
+
+  scheduleHeartbeat() {
+    clearInterval(this.heartbeatTimer);
+    const interval = Math.max(500, config.get("heartbeatMs") || 1000);
+    this.heartbeatTimer = setInterval(() => this.heartbeatTick(), interval);
+  }
+
+  /**
+   * Fast probe lane for hosts the user is watching:
+   * topology-diagram IPs plus every device currently marked up.
+   * Does not record samples (history stays at sweep rate) and does
+   * not touch this.sweeping so it keeps running during a full sweep.
+   */
+  async heartbeatTick() {
+    if (!this.running) return;
+
+    this.refreshExtraTargets();
+
+    const ips = new Set(this.extraTargets);
+    for (const d of db.listDevices()) {
+      if (d.status === "up") ips.add(d.ip);
+    }
+    if (!ips.size) return;
+
+    try {
+      await this.probeAll([...ips], { recordSample: false });
+    } catch (error) {
+      console.warn("[monitor] heartbeat error:", error.message);
+    }
   }
 
   forceFullSweep() {
@@ -229,7 +263,7 @@ class Monitor extends EventEmitter {
     }
   }
 
-  async probeAll(ips) {
+  async probeAll(ips, opts = {}) {
     const missThreshold = config.get("missThreshold") || 3;
     const timeoutMs = config.get("pingTimeoutMs") || 1000;
     const queue = [...ips];
@@ -238,7 +272,7 @@ class Monitor extends EventEmitter {
     const worker = async () => {
       while (queue.length) {
         const ip = queue.shift();
-        await this.probeOne(ip, missThreshold, timeoutMs);
+        await this.probeOne(ip, missThreshold, timeoutMs, opts);
       }
     };
 
@@ -249,7 +283,7 @@ class Monitor extends EventEmitter {
     await Promise.all(workers);
   }
 
-  async probeOne(ip, missThreshold, timeoutMs) {
+  async probeOne(ip, missThreshold, timeoutMs, opts = {}) {
     const result = await ping(ip, timeoutMs);
     const now = Date.now();
     let device = db.getDeviceByIp(ip);
@@ -293,7 +327,9 @@ class Monitor extends EventEmitter {
       return;
     }
 
-    db.insertSample(device.id, now, result.ok ? result.ms : null);
+    if (opts.recordSample !== false) {
+      db.insertSample(device.id, now, result.ok ? result.ms : null);
+    }
 
     const currentStatus = device.status;
 
@@ -304,6 +340,7 @@ class Monitor extends EventEmitter {
         ip: device.ip,
         hostname: device.hostname,
         mac: device.mac,
+        status: "up",
         rttMs: result.ms,
         lastSeen: now,
       });
@@ -316,6 +353,8 @@ class Monitor extends EventEmitter {
         ip: device.ip,
         hostname: device.hostname,
         mac: device.mac,
+        status: "down",
+        rttMs: null,
         lastSeen: device.last_seen,
       });
     }
@@ -369,6 +408,7 @@ class Monitor extends EventEmitter {
             id: device.id,
             ip: device.ip,
             hostname: name,
+            status: device.status,
           });
         }
       } catch {
